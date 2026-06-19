@@ -524,6 +524,233 @@ body {
   border: 1px solid var(--border);
 }
 
+/* ========= VERDICT CLASSES (0-10) ========= */
+.v-elite  { color: #00e5b0; }
+.v-strong { color: var(--green); }
+.v-good   { color: var(--teal); }
+.v-weak   { color: var(--yellow); }
+.v-reject { color: var(--red); }
+
+.verdict-badge.v-elite  { background:rgba(0,229,176,.12);  color:#00e5b0; }
+.verdict-badge.v-strong { background:var(--green-dim);     color:var(--green); }
+.verdict-badge.v-good   { background:var(--teal-dim);      color:var(--teal); }
+.verdict-badge.v-weak   { background:var(--yellow-dim);    color:var(--yellow); }
+.verdict-badge.v-reject { background:var(--red-dim);       color:var(--red); }
+
+/* ========= OVERALL SCORE (0-10) ========= */
+.overall-denom {
+  font-size: 24px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  opacity: 0.6;
+}
+
+/* ========= LIVE PRICE ========= */
+.live-price {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 8px;
+  padding: 6px 14px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.lp-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--green);
+  background: var(--green-dim);
+  padding: 2px 6px;
+  border-radius: 3px;
+  border: 1px solid rgba(16,185,129,.3);
+}
+.lp-price { font-size: 16px; font-weight: 700; font-family: var(--font-mono); }
+.lp-pos   { font-size: 12px; font-weight: 600; color: var(--green); }
+.lp-neg   { font-size: 12px; font-weight: 600; color: var(--red); }
+
+/* ========= ASSET AUTOCOMPLETE ========= */
+.asset-wrap { position: relative; }
+
+.suggestions-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  width: 320px;
+  background: var(--card);
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  box-shadow: 0 20px 40px rgba(0,0,0,.6);
+  z-index: 1000;
+  overflow: hidden;
+  max-height: 380px;
+  overflow-y: auto;
+}
+
+.suggestion-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: background .12s;
+  border-bottom: 1px solid var(--border);
+}
+.suggestion-item:last-child { border-bottom: none; }
+.suggestion-item:hover { background: var(--card-hover); }
+
+.suggestion-left { display: flex; flex-direction: column; gap: 2px; }
+.suggestion-label { font-size: 13px; font-weight: 600; color: var(--text); }
+.suggestion-symbol { font-size: 11px; font-family: var(--font-mono); color: var(--muted); }
+
+.suggestion-type {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .6px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid;
+}
+
+/* ========= FINAL DECISION WIDGET ========= */
+.final-decision {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 24px;
+  align-items: center;
+  margin: 0 24px 16px;
+  padding: 24px 28px;
+  border-radius: 14px;
+  border: 1px solid;
+}
+
+.fd-take {
+  background: rgba(16,185,129,.06);
+  border-color: rgba(16,185,129,.3);
+}
+.fd-avoid {
+  background: rgba(239,68,68,.06);
+  border-color: rgba(239,68,68,.3);
+}
+
+.fd-verdict-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.fd-verdict-text {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  line-height: 1;
+  margin-bottom: 12px;
+}
+.fd-take .fd-verdict-text { color: #10b981; }
+.fd-avoid .fd-verdict-text { color: #ef4444; }
+
+.fd-meta { display: flex; align-items: center; gap: 12px; }
+
+.fd-direction {
+  padding: 5px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .5px;
+}
+.dir-long  { background: var(--green-dim);  color: var(--green);  border:1px solid rgba(16,185,129,.3); }
+.dir-short { background: var(--red-dim);    color: var(--red);    border:1px solid rgba(239,68,68,.3); }
+.dir-none  { background: var(--yellow-dim); color: var(--yellow); border:1px solid rgba(245,158,11,.3); }
+
+.fd-confidence { font-size: 12px; color: var(--text-sec); }
+
+.fd-levels {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.fd-level {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 7px 12px;
+  background: var(--surface);
+  border-radius: 7px;
+  font-size: 12px;
+}
+.fd-level span  { color: var(--muted); }
+.fd-level strong { font-family: var(--font-mono); font-size: 13px; }
+
+.fd-reject-reason {
+  padding: 14px;
+  background: var(--red-dim);
+  border-radius: 8px;
+  border: 1px solid rgba(239,68,68,.2);
+  color: var(--red);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.fd-right {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 16px;
+  background: var(--surface);
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  min-width: 140px;
+}
+
+.fd-score-big {
+  font-size: 52px;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  line-height: 1;
+}
+.fd-take .fd-score-big { color: var(--green); }
+.fd-avoid .fd-score-big { color: var(--red); }
+
+.fd-score-label { font-size: 18px; color: var(--muted); font-family: var(--font-mono); }
+
+.fd-score-tag {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .5px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  text-align: center;
+}
+.fd-score-tag.v-elite  { background:rgba(0,229,176,.12);  color:#00e5b0; }
+.fd-score-tag.v-strong { background:var(--green-dim);     color:var(--green); }
+.fd-score-tag.v-good   { background:var(--teal-dim);      color:var(--teal); }
+.fd-score-tag.v-weak   { background:var(--yellow-dim);    color:var(--yellow); }
+.fd-score-tag.v-reject { background:var(--red-dim);       color:var(--red); }
+
+/* ========= PDF BUTTON ========= */
+.pdf-btn {
+  margin-top: 4px;
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--card);
+  border: 1px solid var(--border-light);
+  color: var(--text-sec);
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .15s;
+}
+.pdf-btn:hover {
+  border-color: var(--teal);
+  color: var(--teal);
+  background: var(--teal-dim);
+}
+
 /* ========= SCROLLBAR ========= */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: var(--surface); }

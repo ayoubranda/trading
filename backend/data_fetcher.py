@@ -3,6 +3,50 @@ import pandas as pd
 import numpy as np
 from typing import Dict, Any
 
+# Maps common user-friendly names → yfinance symbols
+SYMBOL_MAP: Dict[str, str] = {
+    # Forex
+    "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "USDJPY": "USDJPY=X",
+    "USDCHF": "USDCHF=X", "AUDUSD": "AUDUSD=X", "NZDUSD": "NZDUSD=X",
+    "USDCAD": "USDCAD=X", "EURGBP": "EURGBP=X", "EURJPY": "EURJPY=X",
+    "GBPJPY": "GBPJPY=X", "EURAUD": "EURAUD=X", "EURCAD": "EURCAD=X",
+    "EURCHF": "EURCHF=X", "GBPCHF": "GBPCHF=X", "AUDJPY": "AUDJPY=X",
+    "AUDCAD": "AUDCAD=X", "AUDNZD": "AUDNZD=X", "NZDJPY": "NZDJPY=X",
+    "CADJPY": "CADJPY=X", "CHFJPY": "CHFJPY=X", "USDMXN": "USDMXN=X",
+    "USDZAR": "USDZAR=X", "USDNOK": "USDNOK=X", "USDSEK": "USDSEK=X",
+    "USDSGD": "USDSGD=X", "USDHKD": "USDHKD=X", "USDCNH": "USDCNH=X",
+    "USDINR": "USDINR=X", "USDTRY": "USDTRY=X",
+    # Commodities (common aliases → futures)
+    "GOLD":      "GC=F",  "XAUUSD":    "GC=F",  "XAU":       "GC=F",
+    "SILVER":    "SI=F",  "XAGUSD":    "SI=F",  "XAG":       "SI=F",
+    "OIL":       "CL=F",  "WTI":       "CL=F",  "CRUDE":     "CL=F",
+    "USOIL":     "CL=F",  "CRUDEOIL":  "CL=F",
+    "BRENT":     "BZ=F",  "UKOIL":     "BZ=F",
+    "NATGAS":    "NG=F",  "NATURALGAS":"NG=F",  "GAS":       "NG=F",
+    "COPPER":    "HG=F",  "PLATINUM":  "PL=F",  "PALLADIUM": "PA=F",
+    "CORN":      "ZC=F",  "WHEAT":     "ZW=F",  "SOYBEAN":   "ZS=F",
+    # Crypto
+    "BTCUSD":  "BTC-USD",  "BTC":     "BTC-USD",  "BITCOIN":  "BTC-USD",
+    "ETHUSD":  "ETH-USD",  "ETH":     "ETH-USD",  "ETHEREUM": "ETH-USD",
+    "SOLUSD":  "SOL-USD",  "SOL":     "SOL-USD",
+    "BNBUSD":  "BNB-USD",  "BNB":     "BNB-USD",
+    "XRPUSD":  "XRP-USD",  "XRP":     "XRP-USD",
+    "ADAUSD":  "ADA-USD",  "ADA":     "ADA-USD",
+    "DOGEUSD": "DOGE-USD", "DOGE":    "DOGE-USD",
+    "AVAXUSD": "AVAX-USD", "AVAX":    "AVAX-USD",
+    "DOTUSD":  "DOT-USD",  "DOT":     "DOT-USD",
+    "LINKUSD": "LINK-USD", "LINK":    "LINK-USD",
+    # Indices
+    "VIX":    "^VIX",  "US10Y":  "^TNX",
+    "DAX":    "^GDAXI","FTSE":   "^FTSE",
+    "NIKKEI": "^N225", "CAC40":  "^FCHI",
+    "ASX200": "^AXJO",
+}
+
+def normalize_symbol(ticker: str) -> str:
+    """Map user-friendly ticker names to correct yfinance symbols."""
+    return SYMBOL_MAP.get(ticker.upper(), ticker)
+
 TIMEFRAME_MAP: Dict[str, tuple] = {
     "1m":  ("5d",  "1m"),
     "5m":  ("60d", "5m"),
@@ -87,7 +131,21 @@ def _recent_candles(df: pd.DataFrame, n: int = 30) -> list:
     return rows
 
 
+def fetch_quote(ticker: str) -> Dict[str, Any]:
+    """Fast single-price lookup for the live price bar."""
+    yf_symbol = normalize_symbol(ticker)
+    t = yf.Ticker(yf_symbol)
+    df = t.history(period="2d", interval="1d", auto_adjust=True)
+    if df.empty:
+        raise ValueError(f"No data for '{ticker}'")
+    price = round(float(df["Close"].iloc[-1]), 4)
+    prev  = round(float(df["Close"].iloc[-2]), 4) if len(df) >= 2 else price
+    change_pct = round((price - prev) / prev * 100, 2) if prev else 0
+    return {"symbol": yf_symbol, "price": price, "change_pct": change_pct}
+
+
 def fetch_market_data(ticker: str, timeframe: str) -> Dict[str, Any]:
+    ticker = normalize_symbol(ticker)
     period, interval = TIMEFRAME_MAP.get(timeframe, ("2y", "1d"))
     t = yf.Ticker(ticker)
     df = t.history(period=period, interval=interval, auto_adjust=True)
