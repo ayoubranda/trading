@@ -6,8 +6,10 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      '/analyze': 'http://localhost:8000',
-      '/health': 'http://localhost:8000',
+      '/analyze': { target: 'http://localhost:8000', changeOrigin: true, timeout: 300000 },
+      '/elliott':  { target: 'http://localhost:8000', changeOrigin: true, timeout: 300000 },
+      '/quote':    { target: 'http://localhost:8000', changeOrigin: true, timeout: 300000 },
+      '/health':   { target: 'http://localhost:8000', changeOrigin: true },
     }
   }
 })
