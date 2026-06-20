@@ -10,11 +10,11 @@ echo ""
 
 # ── Backend ──────────────────────────────────────────────────
 echo "▶ Installing Python dependencies..."
-pip install -q -r "$ROOT/backend/requirements.txt"
+python -m pip install -q -r "$ROOT/backend/requirements.txt"
 
 echo "▶ Starting backend (http://localhost:8000)..."
 cd "$ROOT/backend"
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload --timeout-keep-alive 120 &
+python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload --timeout-keep-alive 120 &
 BACKEND_PID=$!
 cd "$ROOT"
 
