@@ -807,6 +807,16 @@ body {
 
 .ew-toggle { font-size:12px; color:var(--muted); }
 
+.ew-notice {
+  margin: 10px 20px 0;
+  padding: 8px 14px;
+  background: rgba(245,158,11,.08);
+  border: 1px solid rgba(245,158,11,.3);
+  border-radius: 8px;
+  color: #f59e0b;
+  font-size: 12px;
+}
+
 .ew-error {
   margin: 12px 20px;
   padding: 10px 14px;

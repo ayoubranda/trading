@@ -472,8 +472,11 @@ function ElliottWaveWidget({ ticker, timeframe, apiKey, model, yfTicker }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ticker: yfTicker || ticker, timeframe, api_key: apiKey, model }),
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.detail || 'Elliott analysis failed')
+      const text = await res.text()
+      if (!text) throw new Error('Server returned empty response — Elliott analysis may have timed out. Try again, or switch to Opus 4.8.')
+      let data
+      try { data = JSON.parse(text) } catch { throw new Error(`Server error (${res.status}): ${text.slice(0, 300)}`) }
+      if (!res.ok) throw new Error(data.detail || `Elliott analysis failed (${res.status})`)
       setEw(data)
     } catch (e) {
       setError(e.message)
@@ -510,6 +513,9 @@ function ElliottWaveWidget({ ticker, timeframe, apiKey, model, yfTicker }) {
         </div>
       </div>
 
+      {model !== 'claude-opus-4-8' && (
+        <div className="ew-notice">⚠ Elliott analysis uses a 200K-char knowledge base. Opus 4.8 is strongly recommended — smaller models may fail or time out.</div>
+      )}
       {error && <div className="ew-error">⚠ {error}</div>}
 
       {/* Body */}
