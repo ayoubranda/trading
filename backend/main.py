@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from data_fetcher import fetch_market_data, fetch_quote
 from analyzer import analyze
+from elliott_analyzer import analyze_elliott
 import json
 
 app = FastAPI(title="Elite Trading Intelligence API", version="1.0.0")
@@ -38,9 +39,27 @@ async def run_analysis(req: AnalysisRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis error: {e}")
 
-    # Ensure live price fields survive
     result.setdefault("current_price", market_data["current_price"])
     result.setdefault("price_change_1d_pct", market_data["price_change_1d_pct"])
+    return result
+
+
+@app.post("/elliott")
+async def run_elliott(req: AnalysisRequest):
+    try:
+        market_data = fetch_market_data(req.ticker.strip().upper(), req.timeframe)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Data fetch error: {e}")
+
+    try:
+        result = analyze_elliott(market_data, req.api_key.strip(), req.model)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse Elliott response as JSON: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Elliott analysis error: {e}")
+
     return result
 
 

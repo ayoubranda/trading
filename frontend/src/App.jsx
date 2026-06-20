@@ -420,6 +420,249 @@ function generatePDF(analysis, assetLabel, timeframe) {
   doc.save(fname)
 }
 
+// ─── Elliott Wave Widget ─────────────────────────────────────
+function ConfidenceBar({ score }) {
+  const color = score >= 75 ? '#10b981' : score >= 50 ? '#f59e0b' : '#ef4444'
+  const label = score >= 75 ? 'High' : score >= 50 ? 'Moderate' : 'Low'
+  return (
+    <div className="ew-confidence">
+      <div className="ew-conf-header">
+        <span>Elliott Confidence</span>
+        <span style={{ color, fontWeight: 700, fontFamily: 'JetBrains Mono,monospace' }}>{score}% — {label}</span>
+      </div>
+      <div className="ew-conf-bar-bg">
+        <div className="ew-conf-bar-fill" style={{ width: `${score}%`, background: color }} />
+      </div>
+    </div>
+  )
+}
+
+function RuleRow({ rule }) {
+  const color = rule.status === 'CONFIRMED' ? '#10b981' : rule.status === 'VIOLATED' ? '#ef4444' : '#f59e0b'
+  const icon  = rule.status === 'CONFIRMED' ? '✓' : rule.status === 'VIOLATED' ? '✗' : '?'
+  return (
+    <div className="ew-rule-row">
+      <span className="ew-rule-icon" style={{ color }}>{icon}</span>
+      <div className="ew-rule-body">
+        <div className="ew-rule-text">{rule.rule}</div>
+        <div className="ew-rule-detail">{rule.detail}</div>
+        <div className="ew-rule-section">{rule.ewp_section}</div>
+      </div>
+    </div>
+  )
+}
+
+function ElliottWaveWidget({ ticker, timeframe, apiKey, model, yfTicker }) {
+  const [loading,  setLoading]  = useState(false)
+  const [ew,       setEw]       = useState(null)
+  const [error,    setError]    = useState(null)
+  const [expanded, setExpanded] = useState(true)
+
+  const verdictColor = !ew ? '#475569'
+    : ew.elliott_verdict === 'VALID_TRADE' ? '#10b981'
+    : ew.elliott_verdict === 'WAIT'        ? '#f59e0b'
+    : '#ef4444'
+
+  const run = async () => {
+    if (!apiKey) return setError('API key required')
+    setLoading(true); setError(null)
+    try {
+      const res = await fetch('/elliott', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticker: yfTicker || ticker, timeframe, api_key: apiKey, model }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Elliott analysis failed')
+      setEw(data)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="ew-widget">
+      {/* Header */}
+      <div className="ew-header" onClick={() => setExpanded(!expanded)}>
+        <div className="ew-header-left">
+          <span className="ew-logo">〜</span>
+          <div>
+            <div className="ew-title">Elliott Wave Analysis</div>
+            <div className="ew-subtitle">Frost &amp; Prechter — Elliott Wave Principle</div>
+          </div>
+        </div>
+        <div className="ew-header-right">
+          {ew && (
+            <span className="ew-verdict-pill" style={{ background: verdictColor + '20', color: verdictColor, borderColor: verdictColor + '50' }}>
+              {ew.elliott_verdict}
+            </span>
+          )}
+          <button
+            className="ew-run-btn"
+            onClick={e => { e.stopPropagation(); run() }}
+            disabled={loading}
+          >
+            {loading ? <><span className="spinner" />Running...</> : '⟳ Run Elliott Analysis'}
+          </button>
+          <span className="ew-toggle">{expanded ? '▲' : '▼'}</span>
+        </div>
+      </div>
+
+      {error && <div className="ew-error">⚠ {error}</div>}
+
+      {/* Body */}
+      {expanded && ew && (
+        <div className="ew-body">
+
+          {/* Row 1: Wave Count + Confidence + Verdict */}
+          <div className="ew-top-row">
+            <div className="ew-card ew-wave-count">
+              <div className="ew-card-title">WAVE COUNT</div>
+              <div className="ew-primary-label">{ew.wave_count?.primary_label}</div>
+              <div className="ew-tags">
+                <span className="ew-tag">{ew.wave_count?.pattern}</span>
+                <span className="ew-tag">{ew.wave_count?.degree}</span>
+              </div>
+              <div className="ew-position">{ew.wave_count?.current_position}</div>
+              <div className="ew-subwaves">{ew.wave_count?.sub_waves?.description}</div>
+            </div>
+
+            <div className="ew-card ew-conf-card">
+              <div className="ew-card-title">CONFIDENCE BREAKDOWN</div>
+              <ConfidenceBar score={ew.confidence?.score || 0} />
+              <div className="ew-breakdown">
+                {Object.entries(ew.confidence?.breakdown || {}).map(([k, v]) => (
+                  <div key={k} className="ew-breakdown-row">
+                    <span>{k.replace(/_/g,' ')}</span>
+                    <div className="ew-mini-bar-bg">
+                      <div className="ew-mini-bar-fill" style={{
+                        width: `${v}%`,
+                        background: v>=70?'#10b981':v>=50?'#f59e0b':'#ef4444'
+                      }}/>
+                    </div>
+                    <span style={{ fontFamily:'JetBrains Mono,monospace', fontSize:'11px', minWidth:28 }}>{v}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="ew-card ew-verdict-card">
+              <div className="ew-card-title">EWP VERDICT</div>
+              <div className="ew-big-verdict" style={{ color: verdictColor }}>
+                {ew.elliott_verdict === 'VALID_TRADE' ? '✓ VALID TRADE'
+                 : ew.elliott_verdict === 'WAIT'       ? '⏸ WAIT'
+                 : '✗ NO TRADE'}
+              </div>
+              <div className="ew-verdict-reason">{ew.verdict_reason}</div>
+              {ew.trade_recommendation?.action !== 'NO_TRADE' && ew.trade_recommendation?.action !== 'WAIT' && (
+                <div className={`ew-direction-badge ${ew.trade_recommendation?.direction?.toLowerCase()}`}>
+                  {ew.trade_recommendation?.direction === 'Long' ? '▲ LONG' : '▼ SHORT'}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Row 2: Trade Setup + Fibonacci */}
+          {ew.trade_recommendation?.action !== 'NO_TRADE' && (
+            <div className="ew-mid-row">
+              <div className="ew-card">
+                <div className="ew-card-title">🎯 WAVE-BASED TRADE SETUP</div>
+                <div className="ew-setup-context">{ew.trade_recommendation?.wave_entry_context}</div>
+                <div className="ew-setup-grid">
+                  <div className="ew-setup-item"><span>Entry</span><strong>{ew.trade_recommendation?.entry_zone||'—'}</strong></div>
+                  <div className="ew-setup-item"><span>Invalidation</span><strong style={{color:'#ef4444'}}>{ew.trade_recommendation?.invalidation_level||'—'}</strong></div>
+                  <div className="ew-setup-item"><span>Target 1</span><strong style={{color:'#10b981'}}>{ew.trade_recommendation?.target_1||'—'}</strong></div>
+                  <div className="ew-setup-item"><span>Target 2</span><strong style={{color:'#10b981'}}>{ew.trade_recommendation?.target_2||'—'}</strong></div>
+                </div>
+                <div className="ew-justification">
+                  <span>EWP Justification:</span> {ew.trade_recommendation?.ewp_justification}
+                </div>
+              </div>
+
+              <div className="ew-card">
+                <div className="ew-card-title">📐 FIBONACCI LEVELS</div>
+                <div className="ew-fib-group">
+                  <div className="ew-fib-label" style={{color:'#ef4444'}}>Retracements</div>
+                  {ew.fibonacci_levels?.retracements?.map((f,i)=>(
+                    <div key={i} className="ew-fib-item">
+                      <span className="ew-fib-dot" style={{background:'#ef4444'}}/>
+                      <span>{f}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="ew-fib-group">
+                  <div className="ew-fib-label" style={{color:'#10b981'}}>Extensions / Targets</div>
+                  {ew.fibonacci_levels?.extensions?.map((f,i)=>(
+                    <div key={i} className="ew-fib-item">
+                      <span className="ew-fib-dot" style={{background:'#10b981'}}/>
+                      <span>{f}</span>
+                    </div>
+                  ))}
+                </div>
+                {ew.fibonacci_levels?.key_support && (
+                  <div className="ew-fib-pair">
+                    <div><span>Key Support</span><strong>{ew.fibonacci_levels.key_support}</strong></div>
+                    <div><span>Key Resistance</span><strong>{ew.fibonacci_levels.key_resistance}</strong></div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Row 3: Rules Applied */}
+          {ew.rules_applied?.length > 0 && (
+            <div className="ew-card">
+              <div className="ew-card-title">📋 EWP RULES APPLIED (Frost &amp; Prechter)</div>
+              <div className="ew-rules-list">
+                {ew.rules_applied.map((r, i) => <RuleRow key={i} rule={r} />)}
+              </div>
+            </div>
+          )}
+
+          {/* Row 4: Alternative Counts + Wave Personality */}
+          <div className="ew-bottom-row">
+            {ew.alternative_counts?.length > 0 && (
+              <div className="ew-card">
+                <div className="ew-card-title">⚠ ALTERNATIVE COUNTS</div>
+                {ew.alternative_counts.map((alt, i) => (
+                  <div key={i} className="ew-alt-count">
+                    <div className="ew-alt-header">
+                      <span className="ew-alt-label">{alt.label}</span>
+                      <span className="ew-alt-prob">{alt.probability_pct}%</span>
+                    </div>
+                    <div className="ew-alt-detail">Invalidation: {alt.invalidation}</div>
+                    <div className="ew-alt-detail">{alt.implication}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {ew.wave_personality_notes && (
+              <div className="ew-card">
+                <div className="ew-card-title">💬 WAVE PERSONALITY (EWP Ch. 2)</div>
+                <div className="ew-personality">{ew.wave_personality_notes}</div>
+              </div>
+            )}
+          </div>
+
+        </div>
+      )}
+
+      {expanded && !ew && !loading && (
+        <div className="ew-placeholder">
+          <div style={{fontSize:32, opacity:.2}}>〜</div>
+          <p>Click <strong>Run Elliott Analysis</strong> to count waves using the<br/>
+          Elliott Wave Principle by Frost &amp; Prechter as the knowledge base.</p>
+          <p style={{fontSize:11, color:'var(--muted)', marginTop:8}}>
+            This is a separate, deeper analysis — runs independently from the main scan.
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Main App ────────────────────────────────────────────────
 export default function App() {
   const [inputValue,   setInputValue]   = useState('NVDA')
@@ -434,6 +677,7 @@ export default function App() {
   const [chartTv,      setChartTv]       = useState('NASDAQ:NVDA')
   const [chartTf,      setChartTf]       = useState('1d')
   const [livePrice,    setLivePrice]     = useState(null)
+  const [activeYf,     setActiveYf]      = useState('NVDA')
   const priceTimer = useRef(null)
 
   const saveKey = (v) => { setApiKey(v); localStorage.setItem('et_api_key',v) }
@@ -450,6 +694,7 @@ export default function App() {
   const handleSelect = (asset) => {
     setSelectedAsset(asset)
     setChartTv(asset.tv)
+    setActiveYf(asset.yf)
     clearTimeout(priceTimer.current)
     priceTimer.current = setTimeout(()=>fetchPrice(asset.yf), 300)
   }
@@ -463,6 +708,7 @@ export default function App() {
     const assetLabel= selectedAsset?.label || inputValue.trim().toUpperCase()
 
     setLoading(true); setError(null); setAnalysis(null)
+    setActiveYf(yfSymbol)
     setChartTv(tvSymbol); setChartTf(timeframe)
 
     try {
@@ -686,6 +932,17 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* ── Elliott Wave Widget ── */}
+      <div style={{padding:'0 24px 32px'}}>
+        <ElliottWaveWidget
+          ticker={inputValue}
+          timeframe={timeframe}
+          apiKey={apiKey}
+          model={model}
+          yfTicker={activeYf}
+        />
+      </div>
     </div>
   )
 }
