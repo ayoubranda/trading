@@ -250,82 +250,100 @@ function AITradeVisualizer({ analysis, ew, news, yfTicker, ticker, timeframe }) 
     if (!containerRef.current || !candles?.candles?.length) return
     if (chartRef.current) { chartRef.current.remove(); chartRef.current = null }
 
-    const chart = createChart(containerRef.current, {
-      layout:  { background: { type: ColorType.Solid, color: '#0a0a16' }, textColor: '#94a3b8' },
-      grid:    { vertLines: { color: 'rgba(30,30,53,.35)' }, horzLines: { color: 'rgba(30,30,53,.35)' } },
-      crosshair: { mode: 1 },
-      rightPriceScale: { borderColor: '#1e1e35' },
-      timeScale: { borderColor: '#1e1e35', timeVisible: true, secondsVisible: false },
-      width:  containerRef.current.clientWidth,
-      height: 420,
-    })
-    chartRef.current = chart
-
-    const cs = chart.addCandlestickSeries({
-      upColor:'#10b981', downColor:'#ef4444',
-      borderUpColor:'#10b981', borderDownColor:'#ef4444',
-      wickUpColor:'#10b981', wickDownColor:'#ef4444',
-    })
-
-    const data = candles.candles
-      .map(c => ({ time: toChartTime(c.date), open:c.open, high:c.high, low:c.low, close:c.close }))
-      .filter(c => c.time !== null)
-      .sort((a,b) => a.time - b.time)
-    cs.setData(data)
-
-    // Trade levels from technical analysis
-    if (analysis?.trade_plan?.valid_setup) {
-      const tp = analysis.trade_plan
-      const levels = [
-        { price:parsePrice(tp.entry_zone),    color:'#06b6d4', title:'ENTRY',    style:LineStyle.Solid,  w:2 },
-        { price:parsePrice(tp.stop_loss),     color:'#ef4444', title:'SL',       style:LineStyle.Dashed, w:1 },
-        { price:parsePrice(tp.take_profit_1), color:'#10b981', title:'TP1',      style:LineStyle.Dashed, w:1 },
-        { price:parsePrice(tp.take_profit_2), color:'#059669', title:'TP2',      style:LineStyle.Dashed, w:1 },
-      ]
-      levels.forEach(({ price, color, title, style, w }) => {
-        if (price) cs.createPriceLine({ price, color, lineWidth:w, lineStyle:style, title })
+    let obs = null
+    try {
+      const chart = createChart(containerRef.current, {
+        layout:  { background: { type: ColorType.Solid, color: '#0a0a16' }, textColor: '#94a3b8' },
+        grid:    { vertLines: { color: 'rgba(30,30,53,.35)' }, horzLines: { color: 'rgba(30,30,53,.35)' } },
+        crosshair: { mode: 1 },
+        rightPriceScale: { borderColor: '#1e1e35' },
+        timeScale: { borderColor: '#1e1e35', timeVisible: true, secondsVisible: false },
+        width:  containerRef.current.clientWidth || 600,
+        height: 420,
       })
-    }
+      chartRef.current = chart
 
-    // Elliott fibonacci key levels
-    if (ew?.fibonacci_levels) {
-      const fib = ew.fibonacci_levels
-      ;[
-        { val:parsePrice(fib.key_support),    title:'EW Support' },
-        { val:parsePrice(fib.key_resistance), title:'EW Resist'  },
-      ].forEach(({ val, title }) => {
-        if (val) cs.createPriceLine({ price:val, color:'#8b5cf6', lineWidth:1, lineStyle:LineStyle.Dotted, title })
+      const cs = chart.addCandlestickSeries({
+        upColor:'#10b981', downColor:'#ef4444',
+        borderUpColor:'#10b981', borderDownColor:'#ef4444',
+        wickUpColor:'#10b981', wickDownColor:'#ef4444',
       })
+
+      // Deduplicate by timestamp (keep last), then sort ascending — required by lightweight-charts
+      const seen = new Map()
+      candles.candles.forEach(c => {
+        const t = toChartTime(c.date)
+        if (t !== null) seen.set(t, { time:t, open:+c.open, high:+c.high, low:+c.low, close:+c.close })
+      })
+      const data = [...seen.values()].sort((a,b) => a.time - b.time)
+      if (!data.length) return
+
+      cs.setData(data)
+
+      // Trade levels from technical analysis
+      if (analysis?.trade_plan?.valid_setup) {
+        const tp = analysis.trade_plan
+        const levels = [
+          { price:parsePrice(tp.entry_zone),    color:'#06b6d4', title:'ENTRY',    style:LineStyle.Solid,  w:2 },
+          { price:parsePrice(tp.stop_loss),     color:'#ef4444', title:'SL',       style:LineStyle.Dashed, w:1 },
+          { price:parsePrice(tp.take_profit_1), color:'#10b981', title:'TP1',      style:LineStyle.Dashed, w:1 },
+          { price:parsePrice(tp.take_profit_2), color:'#059669', title:'TP2',      style:LineStyle.Dashed, w:1 },
+        ]
+        levels.forEach(({ price, color, title, style, w }) => {
+          if (price) cs.createPriceLine({ price, color, lineWidth:w, lineStyle:style, title })
+        })
+      }
+
+      // Elliott fibonacci key levels
+      if (ew?.fibonacci_levels) {
+        const fib = ew.fibonacci_levels
+        ;[
+          { val:parsePrice(fib.key_support),    title:'EW Support' },
+          { val:parsePrice(fib.key_resistance), title:'EW Resist'  },
+        ].forEach(({ val, title }) => {
+          if (val) cs.createPriceLine({ price:val, color:'#8b5cf6', lineWidth:1, lineStyle:LineStyle.Dotted, title })
+        })
+      }
+
+      // Supply / demand zones (rgba instead of 8-digit hex for broad compatibility)
+      const supply = analysis?.supply_demand?.supply_zones?.[0]
+      const demand = analysis?.supply_demand?.demand_zones?.[0]
+      if (supply) { const p=parsePrice(supply.price_range); if(p) cs.createPriceLine({ price:p, color:'rgba(239,68,68,0.5)', lineWidth:1, lineStyle:LineStyle.Dashed, title:`Supply: ${supply.price_range}` }) }
+      if (demand) { const p=parsePrice(demand.price_range); if(p) cs.createPriceLine({ price:p, color:'rgba(16,185,129,0.5)', lineWidth:1, lineStyle:LineStyle.Dashed, title:`Demand: ${demand.price_range}` }) }
+
+      // Swing high/low markers
+      if (data.length) {
+        const markers = []
+        ;(candles.swing_highs || []).slice(-4).forEach(price => {
+          const nearest = data.reduce((best,c) => Math.abs(c.high-price) < Math.abs(best.high-price) ? c : best, data[0])
+          if (nearest) markers.push({ time:nearest.time, position:'aboveBar', color:'#ef4444', shape:'arrowDown', text:'HH' })
+        })
+        ;(candles.swing_lows || []).slice(-4).forEach(price => {
+          const nearest = data.reduce((best,c) => Math.abs(c.low-price) < Math.abs(best.low-price) ? c : best, data[0])
+          if (nearest) markers.push({ time:nearest.time, position:'belowBar', color:'#10b981', shape:'arrowUp', text:'HL' })
+        })
+        if (markers.length) {
+          const unique = [...new Map(markers.map(m=>[m.time,m])).values()].sort((a,b)=>a.time-b.time)
+          cs.setMarkers(unique)
+        }
+      }
+
+      chart.timeScale().fitContent()
+
+      obs = new ResizeObserver(() => {
+        if (containerRef.current) chart.applyOptions({ width: containerRef.current.clientWidth })
+      })
+      obs.observe(containerRef.current)
+    } catch(e) {
+      console.error('Chart build error:', e)
+      setError(`Chart error: ${e.message}`)
+      if (chartRef.current) { chartRef.current.remove(); chartRef.current = null }
     }
 
-    // Supply / demand zones
-    const supply = analysis?.supply_demand?.supply_zones?.[0]
-    const demand = analysis?.supply_demand?.demand_zones?.[0]
-    if (supply) { const p=parsePrice(supply.price_range); if(p) cs.createPriceLine({ price:p, color:'#ef444480', lineWidth:1, lineStyle:LineStyle.Dashed, title:`Supply: ${supply.price_range}` }) }
-    if (demand) { const p=parsePrice(demand.price_range); if(p) cs.createPriceLine({ price:p, color:'#10b98180', lineWidth:1, lineStyle:LineStyle.Dashed, title:`Demand: ${demand.price_range}` }) }
-
-    // Swing high/low markers
-    const markers = []
-    ;(candles.swing_highs || []).slice(-4).forEach(price => {
-      const nearest = data.reduce((best,c) => Math.abs(c.high-price) < Math.abs(best.high-price) ? c : best, data[0])
-      if (nearest) markers.push({ time:nearest.time, position:'aboveBar', color:'#ef4444', shape:'arrowDown', text:'HH' })
-    })
-    ;(candles.swing_lows || []).slice(-4).forEach(price => {
-      const nearest = data.reduce((best,c) => Math.abs(c.low-price) < Math.abs(best.low-price) ? c : best, data[0])
-      if (nearest) markers.push({ time:nearest.time, position:'belowBar', color:'#10b981', shape:'arrowUp', text:'HL' })
-    })
-    if (markers.length) {
-      const unique = [...new Map(markers.map(m=>[m.time,m])).values()].sort((a,b)=>a.time-b.time)
-      cs.setMarkers(unique)
+    return () => {
+      if (obs) obs.disconnect()
+      if (chartRef.current) { chartRef.current.remove(); chartRef.current = null }
     }
-
-    chart.timeScale().fitContent()
-
-    const obs = new ResizeObserver(() => {
-      if (containerRef.current) chart.applyOptions({ width: containerRef.current.clientWidth })
-    })
-    obs.observe(containerRef.current)
-    return () => { obs.disconnect(); if(chartRef.current) { chartRef.current.remove(); chartRef.current=null } }
   }, [candles, analysis, ew])
 
   // AI explanation sections (derived from existing data, no extra API call)
