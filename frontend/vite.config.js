@@ -8,6 +8,7 @@ export default defineConfig({
     proxy: {
       '/analyze': { target: 'http://localhost:8000', changeOrigin: true, timeout: 300000 },
       '/elliott':  { target: 'http://localhost:8000', changeOrigin: true, timeout: 300000 },
+      '/news':     { target: 'http://localhost:8000', changeOrigin: true, timeout: 300000 },
       '/quote':    { target: 'http://localhost:8000', changeOrigin: true, timeout: 300000 },
       '/health':   { target: 'http://localhost:8000', changeOrigin: true },
     }

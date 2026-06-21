@@ -1,10 +1,14 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import Optional
 from data_fetcher import fetch_market_data, fetch_quote
 from analyzer import analyze
 from elliott_analyzer import analyze_elliott
+from news_fetcher import fetch_all_news
+from news_analyzer import analyze_news
 import json
+import asyncio
 
 app = FastAPI(title="Elite Trading Intelligence API", version="1.0.0")
 
@@ -21,6 +25,13 @@ class AnalysisRequest(BaseModel):
     timeframe: str
     api_key: str
     model: str = "claude-opus-4-8"
+
+
+class NewsRequest(BaseModel):
+    asset_name: str
+    api_key: str
+    model: str = "claude-opus-4-8"
+    technical_bias: Optional[str] = None
 
 
 @app.post("/analyze")
@@ -59,6 +70,30 @@ async def run_elliott(req: AnalysisRequest):
         raise HTTPException(status_code=500, detail=f"Failed to parse Elliott response as JSON: {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Elliott analysis error: {e}")
+
+    return result
+
+
+@app.post("/news")
+async def run_news(req: NewsRequest):
+    loop = asyncio.get_event_loop()
+    try:
+        news_items = await loop.run_in_executor(None, fetch_all_news, req.asset_name.strip())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"News fetch error: {e}")
+
+    try:
+        result = analyze_news(
+            asset_name=req.asset_name.strip(),
+            news_items=news_items,
+            api_key=req.api_key.strip(),
+            model=req.model,
+            technical_bias=req.technical_bias,
+        )
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse news analysis: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"News analysis error: {e}")
 
     return result
 

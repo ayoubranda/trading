@@ -420,6 +420,258 @@ function generatePDF(analysis, assetLabel, timeframe) {
   doc.save(fname)
 }
 
+// ─── Fundamental News Widget ─────────────────────────────────
+function FundamentalNewsWidget({ assetName, apiKey, model, analysis }) {
+  const [loading,       setLoading]       = useState(false)
+  const [news,          setNews]          = useState(null)
+  const [error,         setError]         = useState(null)
+  const [expanded,      setExpanded]      = useState(true)
+  const [openItems,     setOpenItems]     = useState(new Set())
+
+  const techBias = analysis?.market_structure?.long_term_trend || null
+
+  const run = async () => {
+    if (!apiKey) return setError('API key required')
+    setLoading(true); setError(null)
+    try {
+      const res = await fetch('/news', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ asset_name: assetName, api_key: apiKey, model, technical_bias: techBias }),
+      })
+      const text = await res.text()
+      if (!text) throw new Error('Server returned empty response. Try again.')
+      let data
+      try { data = JSON.parse(text) } catch { throw new Error(`Server error (${res.status}): ${text.slice(0,300)}`) }
+      if (!res.ok) throw new Error(data.detail || `News analysis failed (${res.status})`)
+      setNews(data)
+    } catch(e) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const toggleItem = (i) => {
+    const s = new Set(openItems)
+    s.has(i) ? s.delete(i) : s.add(i)
+    setOpenItems(s)
+  }
+
+  const biasColor = (b) => {
+    if (!b) return '#475569'
+    if (b.includes('Strong Bullish')) return '#10b981'
+    if (b.includes('Bullish'))        return '#34d399'
+    if (b.includes('Strong Bearish')) return '#ef4444'
+    if (b.includes('Bearish'))        return '#f87171'
+    return '#f59e0b'
+  }
+
+  const impactColor  = (s) => s >= 7 ? '#ef4444' : s >= 4 ? '#f59e0b' : '#475569'
+  const assetColor   = (a) => a === 'Bullish' ? '#10b981' : a === 'Bearish' ? '#ef4444' : '#f59e0b'
+  const actionColor  = (a) => a === 'LONG' ? '#10b981' : a === 'SHORT' ? '#ef4444' : '#f59e0b'
+
+  const getCombined = () => {
+    if (!news) return null
+    const fb = news.fundamental_bias
+    if (!techBias) return { bias: fb, agreement: null, conf: news.confidence_score }
+    const bull = (b) => b?.includes('Bullish')
+    const bear = (b) => b?.includes('Bearish')
+    let bias, agreement, boost = 0
+    if (bull(fb) && techBias === 'Bullish')  { bias = 'Strong Bullish'; agreement = true;  boost = 10 }
+    else if (bear(fb) && techBias === 'Bearish') { bias = 'Strong Bearish'; agreement = true;  boost = 10 }
+    else if ((bull(fb) && techBias === 'Bearish') || (bear(fb) && techBias === 'Bullish')) {
+      bias = 'Neutral'; agreement = false; boost = -15
+    } else { bias = fb; agreement = null }
+    return { bias, agreement, conf: Math.min(100, Math.max(0, news.confidence_score + boost)) }
+  }
+
+  const combined = getCombined()
+  const ac = news ? actionColor(news.suggested_action) : '#475569'
+
+  return (
+    <div className="fn-widget">
+      {/* ── Header ── */}
+      <div className="fn-header" onClick={() => setExpanded(!expanded)}>
+        <div className="fn-header-left">
+          <span className="fn-logo">📰</span>
+          <div>
+            <div className="fn-title">Fundamental News Intelligence</div>
+            <div className="fn-subtitle">Reuters · Kitco · Forex Factory · Federal Reserve · ECB</div>
+          </div>
+        </div>
+        <div className="fn-header-right">
+          {news && (
+            <span className="fn-verdict-pill" style={{ background: ac+'20', color: ac, borderColor: ac+'50' }}>
+              {news.suggested_action}
+            </span>
+          )}
+          <button className="fn-run-btn" onClick={e=>{ e.stopPropagation(); run() }} disabled={loading}>
+            {loading ? <><span className="spinner"/>Fetching News...</> : '⟳ Run News Analysis'}
+          </button>
+          <span className="fn-toggle">{expanded ? '▲' : '▼'}</span>
+        </div>
+      </div>
+
+      {error && <div className="fn-error">⚠ {error}</div>}
+
+      {/* ── Body ── */}
+      {expanded && news && (
+        <div className="fn-body">
+
+          {/* Bias Cards */}
+          <div className="fn-bias-row">
+            {techBias && (
+              <div className="fn-bias-card">
+                <div className="fn-bias-label">TECHNICAL BIAS</div>
+                <div className="fn-bias-value" style={{color:biasColor(techBias)}}>{techBias}</div>
+                <div className="fn-bias-sub">From Chart Analysis</div>
+              </div>
+            )}
+            <div className="fn-bias-card fn-bias-main">
+              <div className="fn-bias-label">FUNDAMENTAL BIAS</div>
+              <div className="fn-bias-value" style={{color:biasColor(news.fundamental_bias)}}>{news.fundamental_bias}</div>
+              <div className="fn-bias-sub">From News Analysis</div>
+            </div>
+            {combined && (
+              <div className={`fn-bias-card ${combined.agreement===true?'fn-agree':combined.agreement===false?'fn-conflict':''}`}>
+                <div className="fn-bias-label">COMBINED BIAS</div>
+                <div className="fn-bias-value" style={{color:biasColor(combined.bias)}}>{combined.bias}</div>
+                {combined.agreement===false && <div className="fn-conflict-warn">⚠ Technical &amp; Fundamental Conflict</div>}
+                {combined.agreement===true  && <div className="fn-agree-note">✓ Signals Aligned — Higher Confidence</div>}
+              </div>
+            )}
+            <div className="fn-bias-card">
+              <div className="fn-bias-label">SUGGESTED ACTION</div>
+              <div className="fn-action-value" style={{color:ac}}>
+                {news.suggested_action==='LONG'?'▲ LONG':news.suggested_action==='SHORT'?'▼ SHORT':'— NO POSITION'}
+              </div>
+              <div className="fn-conf-score" style={{color:ac}}>
+                Confidence: {combined?.conf ?? news.confidence_score}%
+              </div>
+            </div>
+          </div>
+
+          {/* Top Drivers */}
+          {news.top_drivers?.length > 0 && (
+            <div className="fn-card">
+              <div className="fn-card-title">🏆 TOP NEWS DRIVERS</div>
+              <div className="fn-drivers-list">
+                {news.top_drivers.map((d,i) => (
+                  <div key={i} className="fn-driver">
+                    <span className="fn-driver-num">{i+1}</span>
+                    <span>{d}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* News Feed */}
+          {news.news_items?.length > 0 && (
+            <div className="fn-card">
+              <div className="fn-card-title">📋 MARKET-RELEVANT NEWS — LAST 72H</div>
+              <div className="fn-news-list">
+                {news.news_items.map((item,i) => (
+                  <div key={i} className="fn-news-item" onClick={()=>toggleItem(i)}>
+                    <div className="fn-news-header">
+                      <div className="fn-news-meta">
+                        <span className="fn-impact-badge" style={{background:impactColor(item.impact_score)+'20',color:impactColor(item.impact_score),borderColor:impactColor(item.impact_score)+'50'}}>
+                          {item.impact_score}/10
+                        </span>
+                        <span className="fn-source-tag">{item.source}</span>
+                        <span className="fn-age">{item.age}</span>
+                      </div>
+                      <div className="fn-news-tags">
+                        <span className="fn-sentiment-tag">{item.sentiment}</span>
+                        <span className="fn-asset-tag" style={{color:assetColor(item.asset_impact),borderColor:assetColor(item.asset_impact)+'40'}}>
+                          {item.asset_impact}
+                        </span>
+                        <span className="fn-expand-icon">{openItems.has(i)?'▲':'▼'}</span>
+                      </div>
+                    </div>
+                    <div className="fn-news-headline">{item.headline}</div>
+                    {openItems.has(i) && (
+                      <div className="fn-news-detail">
+                        {item.what_happened && (
+                          <div className="fn-detail-row">
+                            <span className="fn-detail-label">What happened</span>
+                            <span>{item.what_happened}</span>
+                          </div>
+                        )}
+                        {item.why_it_matters && (
+                          <div className="fn-detail-row">
+                            <span className="fn-detail-label">Why it matters</span>
+                            <span>{item.why_it_matters}</span>
+                          </div>
+                        )}
+                        {item.expected_reaction && (
+                          <div className="fn-detail-row">
+                            <span className="fn-detail-label">Expected market reaction</span>
+                            <span style={{color:assetColor(item.asset_impact)}}>{item.expected_reaction}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Institutional Outlook */}
+          <div className="fn-card fn-outlook-card">
+            <div className="fn-card-title">🏛 FUNDAMENTAL MARKET OUTLOOK — {assetName.toUpperCase()}</div>
+            <div className="fn-outlook-text">{news.institutional_outlook}</div>
+            <div className="fn-outlook-grid">
+              <div className="fn-outlook-item"><span>Fundamental Bias</span><strong style={{color:biasColor(news.fundamental_bias)}}>{news.fundamental_bias}</strong></div>
+              <div className="fn-outlook-item"><span>Suggested Position</span><strong style={{color:ac}}>{news.suggested_action}</strong></div>
+              <div className="fn-outlook-item"><span>Confidence</span><strong style={{color:ac}}>{news.confidence_score}%</strong></div>
+            </div>
+            {news.risk_notes && (
+              <div className="fn-risk-notes"><span className="fn-risk-label">⚠ Risk Notes:</span> {news.risk_notes}</div>
+            )}
+          </div>
+
+          {/* Bullish / Bearish Factors */}
+          {(news.bias_breakdown?.bullish_factors?.length > 0 || news.bias_breakdown?.bearish_factors?.length > 0) && (
+            <div className="fn-factors-row">
+              {news.bias_breakdown.bullish_factors?.length > 0 && (
+                <div className="fn-card fn-bull-card">
+                  <div className="fn-card-title" style={{color:'#10b981'}}>▲ BULLISH FACTORS</div>
+                  {news.bias_breakdown.bullish_factors.map((f,i)=>(
+                    <div key={i} className="fn-factor-item fn-bull-item">{f}</div>
+                  ))}
+                </div>
+              )}
+              {news.bias_breakdown.bearish_factors?.length > 0 && (
+                <div className="fn-card fn-bear-card">
+                  <div className="fn-card-title" style={{color:'#ef4444'}}>▼ BEARISH FACTORS</div>
+                  {news.bias_breakdown.bearish_factors.map((f,i)=>(
+                    <div key={i} className="fn-factor-item fn-bear-item">{f}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+        </div>
+      )}
+
+      {expanded && !news && !loading && (
+        <div className="fn-placeholder">
+          <div style={{fontSize:32,opacity:.2}}>📰</div>
+          <p>Click <strong>Run News Analysis</strong> to fetch and analyze<br/>
+          the latest market-moving news for <strong>{assetName}</strong>.</p>
+          <p style={{fontSize:11,color:'var(--muted)',marginTop:8}}>
+            Sources: Reuters · Kitco · Forex Factory · Federal Reserve · ECB
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Elliott Wave Widget ─────────────────────────────────────
 function ConfidenceBar({ score }) {
   const color = score >= 75 ? '#10b981' : score >= 50 ? '#f59e0b' : '#ef4444'
@@ -938,6 +1190,16 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* ── Fundamental News Widget ── */}
+      <div style={{padding:'0 24px 16px'}}>
+        <FundamentalNewsWidget
+          assetName={selectedAsset?.label || inputValue}
+          apiKey={apiKey}
+          model={model}
+          analysis={analysis}
+        />
+      </div>
 
       {/* ── Elliott Wave Widget ── */}
       <div style={{padding:'0 24px 32px'}}>
