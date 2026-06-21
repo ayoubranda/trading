@@ -7,10 +7,11 @@ from analyzer import analyze
 from elliott_analyzer import analyze_elliott
 from news_fetcher import fetch_all_news
 from news_analyzer import analyze_news
+from confluence_engine import compute_confluence
 import json
 import asyncio
 
-app = FastAPI(title="Elite Trading Intelligence API", version="1.0.0")
+app = FastAPI(title="Elite Trading Intelligence API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -32,6 +33,12 @@ class NewsRequest(BaseModel):
     api_key: str
     model: str = "claude-opus-4-8"
     technical_bias: Optional[str] = None
+
+
+class ConfluenceRequest(BaseModel):
+    technical: Optional[dict] = None
+    elliott:   Optional[dict] = None
+    news:      Optional[dict] = None
 
 
 @app.post("/analyze")
@@ -96,6 +103,33 @@ async def run_news(req: NewsRequest):
         raise HTTPException(status_code=500, detail=f"News analysis error: {e}")
 
     return result
+
+
+@app.post("/confluence")
+async def run_confluence(req: ConfluenceRequest):
+    try:
+        return compute_confluence(
+            technical=req.technical,
+            elliott=req.elliott,
+            news=req.news,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Confluence error: {e}")
+
+
+@app.get("/candles")
+async def get_candles(ticker: str, timeframe: str):
+    try:
+        data = fetch_market_data(ticker.strip().upper(), timeframe)
+        return {
+            "candles":     data.get("recent_candles", []),
+            "swing_highs": data.get("swing_levels", {}).get("swing_highs", []),
+            "swing_lows":  data.get("swing_levels", {}).get("swing_lows", []),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/quote")

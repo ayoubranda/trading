@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { jsPDF } from 'jspdf'
+import { createChart, ColorType, LineStyle } from 'lightweight-charts'
 import { searchAssets, TYPE_COLORS } from './assets'
 
 const TV_INTERVALS = { '1m':'1','5m':'5','15m':'15','30m':'30','1h':'60','4h':'240','1d':'D','1w':'W' }
@@ -9,6 +10,391 @@ const to10     = (s) => (s / 10).toFixed(1)
 const vLabel   = (s) => s>=90?'ELITE SETUP':s>=80?'STRONG SETUP':s>=70?'GOOD SETUP':s>=60?'WEAK SETUP':'NO VALID SETUP'
 const vClass   = (s) => s>=90?'v-elite':s>=80?'v-strong':s>=70?'v-good':s>=60?'v-weak':'v-reject'
 const takeTrade= (a) => a.trade_plan.valid_setup && a.scores.overall >= 70
+
+// ─── Confluence Engine (pure computation, no API call) ───────
+function computeConfluence(analysis, ew, news) {
+  const W = { technical: 0.40, elliott: 0.35, news: 0.25 }
+  const src = {}
+
+  if (analysis) {
+    const score = analysis.scores?.overall || 0
+    const dir   = analysis.trade_plan?.direction
+    const bias  = dir === 'Long' ? 'bullish' : dir === 'Short' ? 'bearish' : 'neutral'
+    const rs    = []
+    if (analysis.trade_plan?.valid_setup) rs.push(`${dir} trade setup confirmed`)
+    ;(analysis.market_structure?.key_patterns || []).slice(0,2).forEach(p => rs.push(String(p)))
+    if (analysis.market_structure?.analysis) rs.push(analysis.market_structure.analysis.slice(0,110))
+    src.technical = { bias, score, reasons: rs.filter(Boolean).slice(0,5) }
+  }
+  if (ew) {
+    let score  = ew.confidence?.score || 0
+    const verdict = ew.elliott_verdict
+    const dir  = ew.trade_recommendation?.direction
+    let bias   = dir === 'Long' ? 'bullish' : dir === 'Short' ? 'bearish' : 'neutral'
+    if (verdict === 'NO_TRADE') { bias = 'neutral'; score = Math.min(score, 30) }
+    else if (verdict === 'WAIT') score = Math.min(score, 55)
+    const rs = []
+    if (ew.wave_count?.primary_label)   rs.push(ew.wave_count.primary_label)
+    if (ew.wave_count?.current_position) rs.push(ew.wave_count.current_position.slice(0,110))
+    if (ew.verdict_reason)              rs.push(ew.verdict_reason.slice(0,110))
+    src.elliott = { bias, score, reasons: rs.filter(Boolean).slice(0,5) }
+  }
+  if (news) {
+    const score    = news.confidence_score || 0
+    const biasText = news.fundamental_bias || 'Neutral'
+    let bias = biasText.includes('Bullish') ? 'bullish' : biasText.includes('Bearish') ? 'bearish' : 'neutral'
+    if (news.suggested_action === 'NO POSITION') bias = 'neutral'
+    src.news = { bias, score, reasons: (news.top_drivers || []).slice(0,3).filter(Boolean) }
+  }
+
+  if (!Object.keys(src).length) return null
+
+  const totalW   = Object.keys(src).reduce((s,k) => s + W[k], 0)
+  const weighted = Object.keys(src).reduce((s,k) => s + src[k].score * W[k] / totalW, 0)
+
+  const bull = Object.values(src).filter(v => v.bias === 'bullish').length
+  const bear = Object.values(src).filter(v => v.bias === 'bearish').length
+  const n    = Object.keys(src).length
+  const bias = bull > n/2 ? 'BUY' : bear > n/2 ? 'SELL' : 'NEUTRAL'
+
+  const grade      = weighted>=90?'Elite Setup':weighted>=80?'A+':weighted>=70?'A':weighted>=60?'B':weighted>=50?'C':'Avoid'
+  const confidence = weighted>=90?'Very High':weighted>=80?'High':weighted>=70?'Medium':weighted>=60?'Low':'Very Low'
+
+  const allReasons = Object.values(src).flatMap(s => s.reasons).filter(Boolean)
+
+  const risks = []
+  if (ew?.alternative_counts?.[0]) risks.push(`Alt. Elliott count: ${ew.alternative_counts[0].label || ''}`)
+  if (news?.risk_notes) risks.push(news.risk_notes.slice(0,110))
+  if (analysis?.supply_demand?.supply_zones?.[0]) risks.push(`Supply zone at ${analysis.supply_demand.supply_zones[0].price_range}`)
+
+  let tradePlan = {}
+  if (analysis?.trade_plan?.valid_setup) {
+    const tp = analysis.trade_plan
+    tradePlan = { entry:tp.entry_zone, sl:tp.stop_loss, tp1:tp.take_profit_1, tp2:tp.take_profit_2, rr:tp.rr_ratio, direction:tp.direction }
+  } else if (ew?.trade_recommendation?.action && !['NO_TRADE','WAIT'].includes(ew.trade_recommendation.action)) {
+    const tr = ew.trade_recommendation
+    tradePlan = { entry:tr.entry_zone, sl:tr.invalidation_level, tp1:tr.target_1, tp2:tr.target_2, rr:'—', direction:tr.direction }
+  }
+
+  return {
+    score: Math.round(weighted * 10) / 10,
+    grade, bias, confidence,
+    whyThisTrade: allReasons.slice(0,5),
+    risks:        risks.slice(0,3),
+    tradePlan,
+    sources: Object.fromEntries(Object.entries(src).map(([k,v]) => [k, { bias:v.bias, score: Math.round(v.score*10)/10 }])),
+  }
+}
+
+// ─── Institutional Decision Card ─────────────────────────────
+function InstitutionalDecisionCard({ analysis, ew, news, assetLabel, timeframe }) {
+  const c = useMemo(() => computeConfluence(analysis, ew, news), [analysis, ew, news])
+  if (!c) return null
+
+  const biasColor  = c.bias==='BUY'?'#10b981':c.bias==='SELL'?'#ef4444':'#f59e0b'
+  const gradeColor = c.score>=80?'#10b981':c.score>=60?'#f59e0b':'#ef4444'
+  const dirLabel   = c.bias==='BUY'?'▲ BUY':c.bias==='SELL'?'▼ SELL':'— NEUTRAL'
+
+  return (
+    <div className="id-card">
+      {/* Header */}
+      <div className="id-header">
+        <div className="id-header-left">
+          <span className="id-icon">⬟</span>
+          <div>
+            <div className="id-title">INSTITUTIONAL DECISION ENGINE</div>
+            <div className="id-subtitle">Confluencing Technical · Elliott Wave · Fundamental News</div>
+          </div>
+        </div>
+        <div className="id-asset-pill">
+          <span>{assetLabel}</span>
+          <span className="id-tf-badge">{timeframe?.toUpperCase()}</span>
+        </div>
+      </div>
+
+      {/* Score Row */}
+      <div className="id-score-row">
+        <div className="id-metric id-metric-main">
+          <div className="id-metric-label">INST. SCORE</div>
+          <div className="id-metric-big" style={{color:gradeColor}}>
+            {c.score}<span className="id-metric-denom">/100</span>
+          </div>
+          <div className="id-score-bar-bg">
+            <div className="id-score-bar-fill" style={{width:`${c.score}%`,background:gradeColor}}/>
+          </div>
+        </div>
+        <div className="id-metric">
+          <div className="id-metric-label">SETUP GRADE</div>
+          <div className="id-grade" style={{color:gradeColor}}>{c.grade}</div>
+        </div>
+        <div className="id-metric">
+          <div className="id-metric-label">BIAS</div>
+          <div className="id-bias-pill" style={{background:biasColor+'20',color:biasColor,borderColor:biasColor+'50'}}>{dirLabel}</div>
+        </div>
+        <div className="id-metric">
+          <div className="id-metric-label">CONFIDENCE</div>
+          <div className="id-conf-label" style={{color:biasColor}}>{c.confidence}</div>
+          <div className="id-conf-pct" style={{color:biasColor+'99'}}>{c.score}%</div>
+        </div>
+      </div>
+
+      {/* Source Breakdown */}
+      <div className="id-sources-section">
+        <div className="id-sources-title">SIGNAL SOURCES</div>
+        {['technical','elliott','news'].filter(k => c.sources[k]).map(k => {
+          const s  = c.sources[k]
+          const sc = s.score
+          const sc_color = sc>=70?'#10b981':sc>=50?'#f59e0b':'#ef4444'
+          const lbl = k==='technical'?'Technical Analysis':k==='elliott'?'Elliott Wave':'Fundamental News'
+          const bColor = s.bias==='bullish'?'#10b981':s.bias==='bearish'?'#ef4444':'#f59e0b'
+          return (
+            <div key={k} className="id-source-row">
+              <span className="id-source-label">{lbl}</span>
+              <span className="id-source-bias" style={{color:bColor}}>
+                {s.bias==='bullish'?'▲ Bullish':s.bias==='bearish'?'▼ Bearish':'— Neutral'}
+              </span>
+              <div className="id-source-bar-bg">
+                <div className="id-source-bar-fill" style={{width:`${sc}%`,background:sc_color}}/>
+              </div>
+              <span className="id-source-pct" style={{color:sc_color}}>{sc}%</span>
+            </div>
+          )
+        })}
+        {Object.keys(c.sources).length < 3 && (
+          <div className="id-incomplete-note">
+            ⚠ Run {!c.sources.elliott?'Elliott Wave':''}{(!c.sources.elliott&&!c.sources.news)?' + ':''}{!c.sources.news?'News':''} Analysis for full confluence score
+          </div>
+        )}
+      </div>
+
+      {/* Why + Risks */}
+      <div className="id-lower">
+        <div className="id-why">
+          <div className="id-section-title">WHY THIS TRADE</div>
+          {c.whyThisTrade.length ? c.whyThisTrade.map((r,i)=>(
+            <div key={i} className="id-reason"><span className="id-check">✓</span><span>{r}</span></div>
+          )) : <div className="id-empty">Run analysis to generate reasons</div>}
+        </div>
+        <div className="id-risks-col">
+          <div className="id-section-title">RISK FACTORS</div>
+          {c.risks.length ? c.risks.map((r,i)=>(
+            <div key={i} className="id-risk"><span className="id-warn">⚠</span><span>{r}</span></div>
+          )) : <div className="id-no-risk">No major risks identified</div>}
+        </div>
+      </div>
+
+      {/* Trade Plan */}
+      {c.tradePlan?.entry && (
+        <div className="id-trade-plan">
+          <div className="id-section-title">FINAL TRADE PLAN</div>
+          <div className="id-plan-grid">
+            <div className="id-plan-item"><span>Entry</span><strong>{c.tradePlan.entry}</strong></div>
+            <div className="id-plan-item"><span>Stop Loss</span><strong style={{color:'#ef4444'}}>{c.tradePlan.sl}</strong></div>
+            <div className="id-plan-item"><span>Target 1</span><strong style={{color:'#10b981'}}>{c.tradePlan.tp1}</strong></div>
+            <div className="id-plan-item"><span>Target 2</span><strong style={{color:'#10b981'}}>{c.tradePlan.tp2}</strong></div>
+            <div className="id-plan-item"><span>R/R Ratio</span><strong style={{color:'#06b6d4'}}>{c.tradePlan.rr}</strong></div>
+            <div className="id-plan-item"><span>Direction</span>
+              <strong style={{color:c.tradePlan.direction==='Long'?'#10b981':c.tradePlan.direction==='Short'?'#ef4444':'#f59e0b'}}>
+                {c.tradePlan.direction==='Long'?'▲ LONG':c.tradePlan.direction==='Short'?'▼ SHORT':'— NEUTRAL'}
+              </strong>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── AI Trade Visualizer ──────────────────────────────────────
+const parsePrice = (str) => {
+  if (!str || str === '—') return null
+  const clean = String(str).replace(/[$,\s]/g,'')
+  const nums  = clean.match(/\d+\.?\d*/g)
+  if (!nums?.length) return null
+  return nums.length >= 2 ? (parseFloat(nums[0]) + parseFloat(nums[1])) / 2 : parseFloat(nums[0])
+}
+
+const toChartTime = (dateStr) => {
+  const d = new Date(dateStr)
+  return isNaN(d.getTime()) ? null : Math.floor(d.getTime() / 1000)
+}
+
+function AITradeVisualizer({ analysis, ew, news, yfTicker, ticker, timeframe }) {
+  const containerRef = useRef(null)
+  const chartRef     = useRef(null)
+  const [candles,  setCandles]  = useState(null)
+  const [loading,  setLoading]  = useState(false)
+  const [error,    setError]    = useState(null)
+  const [expanded, setExpanded] = useState(true)
+
+  // Fetch candles when technical analysis becomes available
+  useEffect(() => {
+    if (!analysis) return
+    const sym = yfTicker || ticker
+    if (!sym) return
+    setLoading(true); setError(null)
+    fetch(`/candles?ticker=${encodeURIComponent(sym)}&timeframe=${encodeURIComponent(timeframe)}`)
+      .then(r => r.text())
+      .then(text => {
+        if (!text) throw new Error('No candle data returned')
+        const d = JSON.parse(text)
+        if (d.detail) throw new Error(d.detail)
+        setCandles(d)
+      })
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false))
+  }, [analysis, yfTicker, ticker, timeframe])
+
+  // Build / rebuild chart whenever data changes
+  useEffect(() => {
+    if (!containerRef.current || !candles?.candles?.length) return
+    if (chartRef.current) { chartRef.current.remove(); chartRef.current = null }
+
+    const chart = createChart(containerRef.current, {
+      layout:  { background: { type: ColorType.Solid, color: '#0a0a16' }, textColor: '#94a3b8' },
+      grid:    { vertLines: { color: 'rgba(30,30,53,.35)' }, horzLines: { color: 'rgba(30,30,53,.35)' } },
+      crosshair: { mode: 1 },
+      rightPriceScale: { borderColor: '#1e1e35' },
+      timeScale: { borderColor: '#1e1e35', timeVisible: true, secondsVisible: false },
+      width:  containerRef.current.clientWidth,
+      height: 420,
+    })
+    chartRef.current = chart
+
+    const cs = chart.addCandlestickSeries({
+      upColor:'#10b981', downColor:'#ef4444',
+      borderUpColor:'#10b981', borderDownColor:'#ef4444',
+      wickUpColor:'#10b981', wickDownColor:'#ef4444',
+    })
+
+    const data = candles.candles
+      .map(c => ({ time: toChartTime(c.date), open:c.open, high:c.high, low:c.low, close:c.close }))
+      .filter(c => c.time !== null)
+      .sort((a,b) => a.time - b.time)
+    cs.setData(data)
+
+    // Trade levels from technical analysis
+    if (analysis?.trade_plan?.valid_setup) {
+      const tp = analysis.trade_plan
+      const levels = [
+        { price:parsePrice(tp.entry_zone),    color:'#06b6d4', title:'ENTRY',    style:LineStyle.Solid,  w:2 },
+        { price:parsePrice(tp.stop_loss),     color:'#ef4444', title:'SL',       style:LineStyle.Dashed, w:1 },
+        { price:parsePrice(tp.take_profit_1), color:'#10b981', title:'TP1',      style:LineStyle.Dashed, w:1 },
+        { price:parsePrice(tp.take_profit_2), color:'#059669', title:'TP2',      style:LineStyle.Dashed, w:1 },
+      ]
+      levels.forEach(({ price, color, title, style, w }) => {
+        if (price) cs.createPriceLine({ price, color, lineWidth:w, lineStyle:style, title })
+      })
+    }
+
+    // Elliott fibonacci key levels
+    if (ew?.fibonacci_levels) {
+      const fib = ew.fibonacci_levels
+      ;[
+        { val:parsePrice(fib.key_support),    title:'EW Support' },
+        { val:parsePrice(fib.key_resistance), title:'EW Resist'  },
+      ].forEach(({ val, title }) => {
+        if (val) cs.createPriceLine({ price:val, color:'#8b5cf6', lineWidth:1, lineStyle:LineStyle.Dotted, title })
+      })
+    }
+
+    // Supply / demand zones
+    const supply = analysis?.supply_demand?.supply_zones?.[0]
+    const demand = analysis?.supply_demand?.demand_zones?.[0]
+    if (supply) { const p=parsePrice(supply.price_range); if(p) cs.createPriceLine({ price:p, color:'#ef444480', lineWidth:1, lineStyle:LineStyle.Dashed, title:`Supply: ${supply.price_range}` }) }
+    if (demand) { const p=parsePrice(demand.price_range); if(p) cs.createPriceLine({ price:p, color:'#10b98180', lineWidth:1, lineStyle:LineStyle.Dashed, title:`Demand: ${demand.price_range}` }) }
+
+    // Swing high/low markers
+    const markers = []
+    ;(candles.swing_highs || []).slice(-4).forEach(price => {
+      const nearest = data.reduce((best,c) => Math.abs(c.high-price) < Math.abs(best.high-price) ? c : best, data[0])
+      if (nearest) markers.push({ time:nearest.time, position:'aboveBar', color:'#ef4444', shape:'arrowDown', text:'HH' })
+    })
+    ;(candles.swing_lows || []).slice(-4).forEach(price => {
+      const nearest = data.reduce((best,c) => Math.abs(c.low-price) < Math.abs(best.low-price) ? c : best, data[0])
+      if (nearest) markers.push({ time:nearest.time, position:'belowBar', color:'#10b981', shape:'arrowUp', text:'HL' })
+    })
+    if (markers.length) {
+      const unique = [...new Map(markers.map(m=>[m.time,m])).values()].sort((a,b)=>a.time-b.time)
+      cs.setMarkers(unique)
+    }
+
+    chart.timeScale().fitContent()
+
+    const obs = new ResizeObserver(() => {
+      if (containerRef.current) chart.applyOptions({ width: containerRef.current.clientWidth })
+    })
+    obs.observe(containerRef.current)
+    return () => { obs.disconnect(); if(chartRef.current) { chartRef.current.remove(); chartRef.current=null } }
+  }, [candles, analysis, ew])
+
+  // AI explanation sections (derived from existing data, no extra API call)
+  const explanations = useMemo(() => {
+    const ex = []
+    if (analysis?.market_structure?.analysis)
+      ex.push({ n:'1. Market Structure', t: analysis.market_structure.analysis })
+    if (ew?.wave_count?.current_position)
+      ex.push({ n:'2. Elliott Wave', t: `${ew.wave_count.current_position}. ${ew.verdict_reason||''}` })
+    if (analysis?.trade_plan?.valid_setup)
+      ex.push({ n:'3. Technical Confirmation', t: `${analysis.trade_plan.direction} setup. Entry: ${analysis.trade_plan.entry_zone}. R/R: ${analysis.trade_plan.rr_ratio}. Stop below ${analysis.trade_plan.stop_loss}.` })
+    if (news?.institutional_outlook)
+      ex.push({ n:'4. News Confirmation', t: news.institutional_outlook })
+    const inv = ew?.trade_recommendation?.invalidation_level || analysis?.scenarios?.bearish?.invalidation
+    if (inv) ex.push({ n:'5. Risk Assessment', t: `Wave count invalidated if price crosses ${inv}. ${analysis?.rejection_reason||'Monitor for structural break.'}` })
+    return ex
+  }, [analysis, ew, news])
+
+  if (!analysis) return null
+
+  return (
+    <div className="viz-widget">
+      <div className="viz-header" onClick={()=>setExpanded(!expanded)}>
+        <div className="viz-header-left">
+          <span className="viz-icon">📈</span>
+          <div>
+            <div className="viz-title">AI Trade Visualizer</div>
+            <div className="viz-sub">Elliott Wave · Market Structure · Trade Levels · Supply &amp; Demand</div>
+          </div>
+        </div>
+        <span className="viz-toggle">{expanded?'▲':'▼'}</span>
+      </div>
+
+      {expanded && (
+        <div className="viz-body">
+          {loading && <div className="viz-status"><span className="spinner"/> Loading chart data...</div>}
+          {error   && <div className="viz-error">⚠ {error}</div>}
+
+          {!loading && !error && candles && (
+            <>
+              <div className="viz-legend">
+                {[['#06b6d4','Entry'],['#ef4444','Stop Loss'],['#10b981','TP1'],['#059669','TP2'],['#8b5cf6','EW Levels'],['#ef4444','Supply','0.5'],['#10b981','Demand','0.5']].map(([c,l,o],i)=>(
+                  <span key={i} className="viz-leg-item" style={{color:c,opacity:o||1}}>— {l}</span>
+                ))}
+                <span className="viz-leg-item" style={{color:'#ef4444'}}>▼ HH</span>
+                <span className="viz-leg-item" style={{color:'#10b981'}}>▲ HL</span>
+              </div>
+              <div ref={containerRef} className="viz-chart"/>
+            </>
+          )}
+
+          {explanations.length > 0 && (
+            <div className="viz-explain">
+              <div className="viz-explain-title">Why The AI Chose This Trade</div>
+              <div className="viz-explain-grid">
+                {explanations.map((e,i) => (
+                  <div key={i} className="viz-explain-item">
+                    <div className="viz-explain-section">{e.n}</div>
+                    <div className="viz-explain-text">{e.t}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ─── Score Gauge (0–10) ──────────────────────────────────────
 function ScoreGauge({ score100, label }) {
@@ -421,7 +807,7 @@ function generatePDF(analysis, assetLabel, timeframe) {
 }
 
 // ─── Fundamental News Widget ─────────────────────────────────
-function FundamentalNewsWidget({ assetName, apiKey, model, analysis }) {
+function FundamentalNewsWidget({ assetName, apiKey, model, analysis, onResult }) {
   const [loading,       setLoading]       = useState(false)
   const [news,          setNews]          = useState(null)
   const [error,         setError]         = useState(null)
@@ -445,6 +831,7 @@ function FundamentalNewsWidget({ assetName, apiKey, model, analysis }) {
       try { data = JSON.parse(text) } catch { throw new Error(`Server error (${res.status}): ${text.slice(0,300)}`) }
       if (!res.ok) throw new Error(data.detail || `News analysis failed (${res.status})`)
       setNews(data)
+      if (onResult) onResult(data)
     } catch(e) {
       setError(e.message)
     } finally {
@@ -704,7 +1091,7 @@ function RuleRow({ rule }) {
   )
 }
 
-function ElliottWaveWidget({ ticker, timeframe, apiKey, model, yfTicker }) {
+function ElliottWaveWidget({ ticker, timeframe, apiKey, model, yfTicker, onResult }) {
   const [loading,  setLoading]  = useState(false)
   const [ew,       setEw]       = useState(null)
   const [error,    setError]    = useState(null)
@@ -730,6 +1117,7 @@ function ElliottWaveWidget({ ticker, timeframe, apiKey, model, yfTicker }) {
       try { data = JSON.parse(text) } catch { throw new Error(`Server error (${res.status}): ${text.slice(0, 300)}`) }
       if (!res.ok) throw new Error(data.detail || `Elliott analysis failed (${res.status})`)
       setEw(data)
+      if (onResult) onResult(data)
     } catch (e) {
       setError(e.message)
     } finally {
@@ -936,6 +1324,8 @@ export default function App() {
   const [chartTf,      setChartTf]       = useState('1d')
   const [livePrice,    setLivePrice]     = useState(null)
   const [activeYf,     setActiveYf]      = useState('NVDA')
+  const [ewData,       setEwData]        = useState(null)
+  const [newsData,     setNewsData]      = useState(null)
   const priceTimer = useRef(null)
 
   const saveKey = (v) => { setApiKey(v); localStorage.setItem('et_api_key',v) }
@@ -966,6 +1356,7 @@ export default function App() {
     const assetLabel= selectedAsset?.label || inputValue.trim().toUpperCase()
 
     setLoading(true); setError(null); setAnalysis(null)
+    setEwData(null); setNewsData(null)
     setActiveYf(yfSymbol)
     setChartTv(tvSymbol); setChartTf(timeframe)
 
@@ -1063,6 +1454,19 @@ export default function App() {
       </div>
 
       {error&&<div className="error-banner">⚠ {error}</div>}
+
+      {/* ── Institutional Decision Card ── */}
+      {analysis && (
+        <div style={{padding:'0 24px 16px'}}>
+          <InstitutionalDecisionCard
+            analysis={analysis}
+            ew={ewData}
+            news={newsData}
+            assetLabel={analysis._assetLabel||inputValue}
+            timeframe={timeframe}
+          />
+        </div>
+      )}
 
       {/* ── Chart + Score Panel ── */}
       <div className="main-content">
@@ -1191,6 +1595,20 @@ export default function App() {
         </div>
       )}
 
+      {/* ── AI Trade Visualizer ── */}
+      {analysis && (
+        <div style={{padding:'0 24px 16px'}}>
+          <AITradeVisualizer
+            analysis={analysis}
+            ew={ewData}
+            news={newsData}
+            yfTicker={activeYf}
+            ticker={inputValue}
+            timeframe={timeframe}
+          />
+        </div>
+      )}
+
       {/* ── Fundamental News Widget ── */}
       <div style={{padding:'0 24px 16px'}}>
         <FundamentalNewsWidget
@@ -1198,6 +1616,7 @@ export default function App() {
           apiKey={apiKey}
           model={model}
           analysis={analysis}
+          onResult={setNewsData}
         />
       </div>
 
@@ -1209,6 +1628,7 @@ export default function App() {
           apiKey={apiKey}
           model={model}
           yfTicker={activeYf}
+          onResult={setEwData}
         />
       </div>
     </div>
