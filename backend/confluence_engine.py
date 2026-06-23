@@ -29,6 +29,22 @@ CONFIDENCE_MAP = [
     (0,  "Very Low"),
 ]
 
+# Wyckoff phases that boost confidence (high-probability reversal/entry phases)
+_WYCKOFF_BOOST = {
+    "ACCUMULATION_C": +8.0,   # Spring — highest-confidence long entry
+    "ACCUMULATION_D": +5.0,   # LPS — optimal long entry
+    "DISTRIBUTION_C": +8.0,   # UTAD — highest-confidence short entry
+    "DISTRIBUTION_D": +5.0,   # LPSY — optimal short entry
+}
+# Wyckoff phases that reduce confidence (indeterminate or building phases)
+_WYCKOFF_REDUCE = {
+    "ACCUMULATION_A": -3.0,   # Climax — too early; direction uncertain
+    "ACCUMULATION_B": -5.0,   # Cause building — not yet actionable
+    "DISTRIBUTION_A": -3.0,
+    "DISTRIBUTION_B": -5.0,
+    "INDETERMINATE":  -5.0,
+}
+
 
 def _first_match(val: float, scale: list) -> str:
     for threshold, label in scale:
@@ -93,6 +109,27 @@ def _extract_news(n: Dict) -> tuple:
     return bias, score, reasons
 
 
+def _wyckoff_adjustment(technical: Optional[Dict]) -> tuple[float, str | None]:
+    """Return (score_delta, citation) from Wyckoff phase in technical analysis."""
+    if not technical:
+        return 0.0, None
+    ms = technical.get("market_structure") or {}
+    phase = ms.get("wyckoff_phase", "")
+    context = ms.get("wyckoff_context", "")
+    delta = _WYCKOFF_BOOST.get(phase, _WYCKOFF_REDUCE.get(phase, 0.0))
+    citation = f"Wyckoff Phase: {phase} — {context}" if phase and phase != "INDETERMINATE" else None
+    return delta, citation
+
+
+def _mtf_aligned(technical: Optional[Dict]) -> bool:
+    """Check MTF alignment from technical trade plan."""
+    if not technical:
+        return True
+    tp = technical.get("trade_plan") or {}
+    ms = technical.get("market_structure") or {}
+    return bool(tp.get("mtf_alignment", ms.get("mtf_alignment", True)))
+
+
 def compute_confluence(
     technical: Optional[Dict] = None,
     elliott:   Optional[Dict] = None,
@@ -117,14 +154,25 @@ def compute_confluence(
     total_w = sum(WEIGHTS[k] for k in sources)
     weighted = sum(sources[k]["score"] * WEIGHTS[k] / total_w for k in sources)
 
+    # Apply Wyckoff phase adjustment
+    wyckoff_delta, wyckoff_citation = _wyckoff_adjustment(technical)
+    weighted = max(0.0, min(100.0, weighted + wyckoff_delta))
+
+    # MTF alignment gate: misalignment reduces score significantly
+    mtf_ok = _mtf_aligned(technical)
+    if not mtf_ok:
+        weighted = max(0.0, weighted - 10.0)
+
     # Majority-vote bias
     bull = sum(1 for v in sources.values() if v["bias"] == "bullish")
     bear = sum(1 for v in sources.values() if v["bias"] == "bearish")
     n = len(sources)
     bias = "BUY" if bull > n / 2 else "SELL" if bear > n / 2 else "NEUTRAL"
 
-    # Collect up to 5 reasons
+    # Collect up to 5 reasons — include Wyckoff citation when available
     all_reasons = []
+    if wyckoff_citation:
+        all_reasons.append(wyckoff_citation)
     for src in ("technical", "elliott", "news"):
         if src in sources:
             all_reasons.extend(sources[src]["reasons"])
@@ -132,6 +180,8 @@ def compute_confluence(
 
     # Risk factors
     risks = []
+    if not mtf_ok:
+        risks.append("MTF misalignment: short-term direction conflicts with medium-term trend")
     if elliott:
         alts = (elliott.get("alternative_counts") or [])
         if alts:
@@ -152,6 +202,7 @@ def compute_confluence(
             "entry": tp.get("entry_zone", "—"), "sl": tp.get("stop_loss", "—"),
             "tp1": tp.get("take_profit_1", "—"), "tp2": tp.get("take_profit_2", "—"),
             "rr": tp.get("rr_ratio", "—"), "direction": tp.get("direction", "None"),
+            "mtf_alignment": mtf_ok,
         }
     elif elliott:
         tr = elliott.get("trade_recommendation") or {}
@@ -160,7 +211,24 @@ def compute_confluence(
                 "entry": tr.get("entry_zone", "—"), "sl": tr.get("invalidation_level", "—"),
                 "tp1": tr.get("target_1", "—"), "tp2": tr.get("target_2", "—"),
                 "rr": "—", "direction": tr.get("direction", "None"),
+                "mtf_alignment": mtf_ok,
             }
+
+    # Knowledge citations — what concepts support this analysis
+    citations = []
+    if wyckoff_citation:
+        citations.append(wyckoff_citation)
+    wyckoff_phase = (technical or {}).get("market_structure", {}).get("wyckoff_phase", "")
+    if wyckoff_phase in ("ACCUMULATION_C", "DISTRIBUTION_C"):
+        citations.append("ICT: Liquidity sweep (Spring/UTAD) aligns with Wyckoff Phase C — highest-confidence reversal")
+    if not mtf_ok:
+        citations.append("Risk Management: MTF misalignment detected — reduce position size")
+    premium_discount = (technical or {}).get("liquidity_analysis", {}).get("premium_discount", "")
+    if premium_discount:
+        citations.append(f"ICT Premium/Discount: Price in {premium_discount} zone")
+    ote = (technical or {}).get("liquidity_analysis", {}).get("ote_zone")
+    if ote:
+        citations.append(f"ICT OTE (62-79% retracement zone): {ote}")
 
     final = round(weighted, 1)
     return {
@@ -174,4 +242,8 @@ def compute_confluence(
         "trade_plan":         trade_plan,
         "sources":            {k: {"bias": v["bias"], "score": round(v["score"], 1)}
                                for k, v in sources.items()},
+        "knowledge_citations": citations,
+        "mtf_alignment":      mtf_ok,
+        "wyckoff_phase":      wyckoff_phase or "INDETERMINATE",
+        "wyckoff_delta":      wyckoff_delta,
     }

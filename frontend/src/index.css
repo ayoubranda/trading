@@ -1318,6 +1318,26 @@ body {
 .id-empty { font-size:12px; color:var(--muted); font-style:italic; }
 .id-no-risk { font-size:12px; color:#10b981; font-style:italic; }
 
+/* Wyckoff + MTF tags */
+.id-tags-row { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+.id-tag {
+  display:inline-flex; align-items:center; gap:4px;
+  padding:3px 10px; border-radius:20px; font-size:10px; font-weight:600; letter-spacing:.4px;
+}
+.id-tag-wyckoff { background:rgba(139,92,246,.15); color:#a78bfa; border:1px solid rgba(139,92,246,.3); }
+.id-tag-mtf-ok  { background:rgba(16,185,129,.12);  color:#10b981;  border:1px solid rgba(16,185,129,.3); }
+.id-tag-mtf-fail{ background:rgba(239,68,68,.12);   color:#ef4444;  border:1px solid rgba(239,68,68,.3); }
+.id-tag-delta   { font-size:9px; opacity:.85; }
+.id-tag-delta-neg { color:#ef4444; }
+
+/* Knowledge Citations */
+.id-citations { padding:12px 20px; border-top:1px solid var(--border); }
+.id-citation-row {
+  display:flex; align-items:baseline; gap:7px;
+  font-size:11px; color:var(--muted); padding:3px 0; line-height:1.4;
+}
+.id-cite-icon { color:#a78bfa; font-size:10px; flex-shrink:0; }
+
 /* Trade Plan */
 .id-trade-plan { padding:16px 20px; }
 .id-plan-grid {

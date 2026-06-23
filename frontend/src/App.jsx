@@ -11,7 +11,17 @@ const vLabel   = (s) => s>=90?'ELITE SETUP':s>=80?'STRONG SETUP':s>=70?'GOOD SET
 const vClass   = (s) => s>=90?'v-elite':s>=80?'v-strong':s>=70?'v-good':s>=60?'v-weak':'v-reject'
 const takeTrade= (a) => a.trade_plan.valid_setup && a.scores.overall >= 70
 
-// ─── Confluence Engine (pure computation, no API call) ───────
+// ─── Confluence Engine (pure computation, mirrors Python engine) ─
+const WYCKOFF_BOOST = {
+  ACCUMULATION_C: +8, ACCUMULATION_D: +5,
+  DISTRIBUTION_C: +8, DISTRIBUTION_D: +5,
+}
+const WYCKOFF_REDUCE = {
+  ACCUMULATION_A: -3, ACCUMULATION_B: -5,
+  DISTRIBUTION_A: -3, DISTRIBUTION_B: -5,
+  INDETERMINATE:  -5,
+}
+
 function computeConfluence(analysis, ew, news) {
   const W = { technical: 0.40, elliott: 0.35, news: 0.25 }
   const src = {}
@@ -50,7 +60,17 @@ function computeConfluence(analysis, ew, news) {
   if (!Object.keys(src).length) return null
 
   const totalW   = Object.keys(src).reduce((s,k) => s + W[k], 0)
-  const weighted = Object.keys(src).reduce((s,k) => s + src[k].score * W[k] / totalW, 0)
+  let   weighted = Object.keys(src).reduce((s,k) => s + src[k].score * W[k] / totalW, 0)
+
+  // Wyckoff phase adjustment
+  const wyckoffPhase = analysis?.market_structure?.wyckoff_phase || 'INDETERMINATE'
+  const wyckoffContext = analysis?.market_structure?.wyckoff_context || ''
+  const wyckoffDelta = WYCKOFF_BOOST[wyckoffPhase] ?? WYCKOFF_REDUCE[wyckoffPhase] ?? 0
+  weighted = Math.max(0, Math.min(100, weighted + wyckoffDelta))
+
+  // MTF alignment gate
+  const mtfOk = analysis?.trade_plan?.mtf_alignment ?? analysis?.market_structure?.mtf_alignment ?? true
+  if (!mtfOk) weighted = Math.max(0, weighted - 10)
 
   const bull = Object.values(src).filter(v => v.bias === 'bullish').length
   const bear = Object.values(src).filter(v => v.bias === 'bearish').length
@@ -60,9 +80,26 @@ function computeConfluence(analysis, ew, news) {
   const grade      = weighted>=90?'Elite Setup':weighted>=80?'A+':weighted>=70?'A':weighted>=60?'B':weighted>=50?'C':'Avoid'
   const confidence = weighted>=90?'Very High':weighted>=80?'High':weighted>=70?'Medium':weighted>=60?'Low':'Very Low'
 
-  const allReasons = Object.values(src).flatMap(s => s.reasons).filter(Boolean)
+  // Knowledge citations
+  const citations = []
+  if (wyckoffPhase && wyckoffPhase !== 'INDETERMINATE' && wyckoffContext)
+    citations.push(`Wyckoff: ${wyckoffPhase} — ${wyckoffContext}`)
+  if (['ACCUMULATION_C','DISTRIBUTION_C'].includes(wyckoffPhase))
+    citations.push('ICT: Liquidity sweep aligns with Wyckoff Phase C — highest-confidence reversal')
+  if (!mtfOk)
+    citations.push('Risk: MTF misalignment detected — reduce position size')
+  const pd = analysis?.liquidity_analysis?.premium_discount
+  if (pd) citations.push(`ICT Premium/Discount: Price in ${pd} zone`)
+  const ote = analysis?.liquidity_analysis?.ote_zone
+  if (ote) citations.push(`ICT OTE (62–79% zone): ${ote}`)
+
+  const allReasons = []
+  if (wyckoffPhase && wyckoffPhase !== 'INDETERMINATE' && wyckoffContext)
+    allReasons.push(`Wyckoff ${wyckoffPhase}: ${wyckoffContext}`)
+  Object.values(src).forEach(s => allReasons.push(...s.reasons))
 
   const risks = []
+  if (!mtfOk) risks.push('MTF misalignment: short-term direction conflicts with medium-term trend')
   if (ew?.alternative_counts?.[0]) risks.push(`Alt. Elliott count: ${ew.alternative_counts[0].label || ''}`)
   if (news?.risk_notes) risks.push(news.risk_notes.slice(0,110))
   if (analysis?.supply_demand?.supply_zones?.[0]) risks.push(`Supply zone at ${analysis.supply_demand.supply_zones[0].price_range}`)
@@ -70,17 +107,19 @@ function computeConfluence(analysis, ew, news) {
   let tradePlan = {}
   if (analysis?.trade_plan?.valid_setup) {
     const tp = analysis.trade_plan
-    tradePlan = { entry:tp.entry_zone, sl:tp.stop_loss, tp1:tp.take_profit_1, tp2:tp.take_profit_2, rr:tp.rr_ratio, direction:tp.direction }
+    tradePlan = { entry:tp.entry_zone, sl:tp.stop_loss, tp1:tp.take_profit_1, tp2:tp.take_profit_2, rr:tp.rr_ratio, direction:tp.direction, mtfOk }
   } else if (ew?.trade_recommendation?.action && !['NO_TRADE','WAIT'].includes(ew.trade_recommendation.action)) {
     const tr = ew.trade_recommendation
-    tradePlan = { entry:tr.entry_zone, sl:tr.invalidation_level, tp1:tr.target_1, tp2:tr.target_2, rr:'—', direction:tr.direction }
+    tradePlan = { entry:tr.entry_zone, sl:tr.invalidation_level, tp1:tr.target_1, tp2:tr.target_2, rr:'—', direction:tr.direction, mtfOk }
   }
 
   return {
     score: Math.round(weighted * 10) / 10,
     grade, bias, confidence,
-    whyThisTrade: allReasons.slice(0,5),
-    risks:        risks.slice(0,3),
+    wyckoffPhase, wyckoffDelta, mtfOk,
+    citations: citations.slice(0, 4),
+    whyThisTrade: allReasons.filter(Boolean).slice(0,5),
+    risks:        risks.filter(Boolean).slice(0,3),
     tradePlan,
     sources: Object.fromEntries(Object.entries(src).map(([k,v]) => [k, { bias:v.bias, score: Math.round(v.score*10)/10 }])),
   }
@@ -138,7 +177,7 @@ function InstitutionalDecisionCard({ analysis, ew, news, assetLabel, timeframe }
         </div>
       </div>
 
-      {/* Source Breakdown */}
+      {/* Source Breakdown + Wyckoff/MTF row */}
       <div className="id-sources-section">
         <div className="id-sources-title">SIGNAL SOURCES</div>
         {['technical','elliott','news'].filter(k => c.sources[k]).map(k => {
@@ -165,7 +204,32 @@ function InstitutionalDecisionCard({ analysis, ew, news, assetLabel, timeframe }
             ⚠ Run {!c.sources.elliott?'Elliott Wave':''}{(!c.sources.elliott&&!c.sources.news)?' + ':''}{!c.sources.news?'News':''} Analysis for full confluence score
           </div>
         )}
+        {/* Wyckoff + MTF tags */}
+        <div className="id-tags-row">
+          {c.wyckoffPhase && c.wyckoffPhase !== 'INDETERMINATE' && (
+            <span className="id-tag id-tag-wyckoff">
+              ⬡ Wyckoff: {c.wyckoffPhase.replace('_',' ')}
+              {c.wyckoffDelta > 0 && <span className="id-tag-delta"> +{c.wyckoffDelta}pts</span>}
+              {c.wyckoffDelta < 0 && <span className="id-tag-delta id-tag-delta-neg"> {c.wyckoffDelta}pts</span>}
+            </span>
+          )}
+          <span className={`id-tag ${c.mtfOk ? 'id-tag-mtf-ok' : 'id-tag-mtf-fail'}`}>
+            {c.mtfOk ? '✓ MTF Aligned' : '⚠ MTF Conflict'}
+          </span>
+        </div>
       </div>
+
+      {/* Knowledge Citations */}
+      {c.citations?.length > 0 && (
+        <div className="id-citations">
+          <div className="id-section-title">KNOWLEDGE CITATIONS</div>
+          {c.citations.map((cit,i) => (
+            <div key={i} className="id-citation-row">
+              <span className="id-cite-icon">⬟</span><span>{cit}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Why + Risks */}
       <div className="id-lower">

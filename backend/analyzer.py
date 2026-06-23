@@ -26,18 +26,47 @@ ANALYSIS PROCESS:
 Step 1 — MARKET STRUCTURE:
 Analyze long-term, medium-term, and short-term trends. Identify Higher Highs, Higher Lows, Lower Highs, Lower Lows, BOS (Break of Structure), CHoCH (Change of Character).
 Determine: Bullish / Bearish / Range / Transitional.
+MTF Alignment: A valid_setup requires the short-term trade direction to align with the medium-term trend. Set mtf_alignment=false if they conflict.
+
+Step 1b — WYCKOFF PHASE IDENTIFICATION:
+Determine the current Wyckoff phase for institutional context:
+- ACCUMULATION_A: Downtrend stopping (Preliminary Support, Selling Climax, Auto Rally, Secondary Test)
+- ACCUMULATION_B: Cause building — choppy range, volume declining on tests
+- ACCUMULATION_C: Spring — price sweeps below range on LOW volume, then immediately recovers (→ STRONG BUY)
+- ACCUMULATION_D: SOS (Sign of Strength, BOS upward with volume) + LPS retest (→ BUY ENTRY)
+- MARKUP: Trending up, Wyckoff cycle complete
+- DISTRIBUTION_A: Uptrend stopping (PSY, Buying Climax, Auto Reaction, Secondary Test)
+- DISTRIBUTION_B: Cause building — choppy range, volume declining on rallies
+- DISTRIBUTION_C: UTAD — price sweeps above range on high volume, then reverses sharply (→ STRONG SELL)
+- DISTRIBUTION_D: SOW (Sign of Weakness, BOS downward with volume) + LPSY retest (→ SELL ENTRY)
+- MARKDOWN: Trending down, Wyckoff cycle complete
+- INDETERMINATE: Cannot classify
+
+Key Wyckoff signals:
+- Volume climax (>2x average) on a reversal candle → Selling/Buying Climax (Phase A)
+- Low-volume sweep below support then immediate recovery → Spring (Phase C) → Highest-confidence LONG
+- Low-volume rally to resistance that fails → UTAD (Phase C) → Highest-confidence SHORT
+- BOS on high volume → SOS/SOW (Phase D) → Trend entry
 
 Step 2 — LIQUIDITY ANALYSIS:
 Identify Equal Highs, Equal Lows, Liquidity Pools, Stop Clusters, Liquidity Sweeps, Trap Zones.
+Also apply ICT Premium/Discount: identify 50% equilibrium of the current range — BUY in discount (<50%), SELL in premium (>50%).
+OTE Zone: 62-79% retracement of prior impulse leg = Optimal Trade Entry area.
+Power of Three (PO3): Identify Accumulation/Manipulation/Distribution phases within sessions.
 Determine where liquidity is resting. Explain institutional intentions.
 
-Step 3 — SUPPLY AND DEMAND:
-Identify Demand Zones, Supply Zones, Order Blocks, Fair Value Gaps, Imbalances.
+Step 3 — SUPPLY AND DEMAND + PATTERN RECOGNITION:
+Identify Demand Zones, Supply Zones, Order Blocks, Fair Value Gaps, SIBI/BISI (body-to-body imbalances).
 Evaluate reaction probability.
+Identify candlestick patterns using formal names: Hammer, Shooting Star, Doji, Marubozu, Engulfing (Bullish/Bearish), Tweezer Top/Bottom, Morning Star, Evening Star, Pin Bar, Three White Soldiers, Three Black Crows.
+Identify chart patterns: Head & Shoulders, Inverse H&S, Double Top, Double Bottom, Bull Flag, Bear Flag, Ascending/Descending/Symmetrical Triangle, Rising/Falling Wedge, Cup & Handle.
+Include pattern targets in key_patterns using format: "Pattern Name — target: $XXXX" or "Pattern Name at [level] [source]".
 
 Step 4 — RISK ASSESSMENT:
 Calculate Entry Zone, Stop Loss, Take Profit 1, Take Profit 2, Risk/Reward Ratio.
-Reject any setup below minimum acceptable quality.
+Stop Loss should be placed beyond 1.0-1.5x ATR(14) from entry to avoid noise.
+Minimum acceptable R:R = 1.5:1. Reject any setup below this threshold.
+Never take a trade with valid_setup=true if R:R < 1.5.
 
 Step 5 — SCENARIO ANALYSIS:
 Provide Bullish, Bearish, and Neutral scenarios, each with Trigger, Target, Invalidation, and Probability.
@@ -45,14 +74,14 @@ Probabilities must sum to 100.
 
 Step 6 — OPPORTUNITY SCORING:
 Score each dimension 0-100:
-- Market Structure Score
-- Liquidity Score
-- Risk Score
-- Confluence Score
-Overall = weighted average. Grade: 90-100=A+, 80-89=A, 70-79=B, 60-69=C, below 60=Rejected.
+- Market Structure Score: trend clarity, BOS/CHoCH quality, Wyckoff phase confirmation
+- Liquidity Score: liquidity pool proximity, sweep quality, institutional footprint
+- Risk Score: R:R quality, stop placement, ATR relationship
+- Confluence Score: alignment of ICT + Wyckoff + pattern + MTF
+Overall = weighted average. Grade: 90-100=Elite Setup, 80-89=A+, 70-79=A, 60-69=B, 50-59=C, below 50=Rejected.
 
 TRADE QUALITY FILTER:
-Reject setups with poor structure, weak confluence, unclear liquidity, low R:R, or news uncertainty.
+Reject setups with poor structure, weak confluence, unclear liquidity, low R:R (<1.5), or MTF misalignment.
 No trade is better than a bad trade.
 
 ─────────────────────────────────────────────────────────────────────
@@ -70,6 +99,9 @@ Use exactly this schema:
     "medium_term_trend": "Bullish|Bearish|Range|Transitional",
     "short_term_trend": "Bullish|Bearish|Range|Transitional",
     "structure_type": "Bullish|Bearish|Range|Transitional",
+    "mtf_alignment": true,
+    "wyckoff_phase": "ACCUMULATION_A|ACCUMULATION_B|ACCUMULATION_C|ACCUMULATION_D|MARKUP|DISTRIBUTION_A|DISTRIBUTION_B|DISTRIBUTION_C|DISTRIBUTION_D|MARKDOWN|INDETERMINATE",
+    "wyckoff_context": "string (1 sentence explaining the Wyckoff phase evidence)",
     "analysis": "string",
     "key_patterns": ["string"]
   },
@@ -80,6 +112,8 @@ Use exactly this schema:
     "stop_clusters": ["string"],
     "sweeps_detected": ["string"],
     "trap_zones": ["string"],
+    "premium_discount": "Premium|Discount|Equilibrium",
+    "ote_zone": "string or null",
     "institutional_intentions": "string"
   },
   "supply_demand": {
@@ -96,7 +130,9 @@ Use exactly this schema:
     "stop_loss": "string",
     "take_profit_1": "string",
     "take_profit_2": "string",
-    "rr_ratio": "string"
+    "rr_ratio": "string",
+    "mtf_alignment": true,
+    "atr_stop_valid": true
   },
   "scenarios": {
     "bullish": {"trigger": "string", "target": "string", "invalidation": "string", "probability": number},
@@ -110,8 +146,8 @@ Use exactly this schema:
     "confluence": number,
     "overall": number
   },
-  "grade": "A+|A|B|C|Rejected",
-  "verdict": "A+ Setup|A Setup|B Setup|C Setup|NO VALID TRADE SETUP DETECTED",
+  "grade": "Elite Setup|A+|A|B|C|Rejected",
+  "verdict": "Elite Setup|A+ Setup|A Setup|B Setup|C Setup|NO VALID TRADE SETUP DETECTED",
   "confidence": "High|Medium|Low",
   "rejection_reason": "string or null"
 }
@@ -123,7 +159,7 @@ def _format_data(d: Dict[str, Any]) -> str:
     sw  = d["swing_levels"]
     candles = "\n".join(
         f"  {c['date']}: O={c['open']} H={c['high']} L={c['low']} C={c['close']} Vol={c['volume']:,}"
-        for c in d["recent_candles"][-20:]
+        for c in d["recent_candles"][-30:]
     )
     return f"""Perform a complete institutional-grade 6-step analysis for:
 
@@ -149,7 +185,7 @@ KEY SWING LEVELS:
   Recent Highs: {sw.get('swing_highs', [])}
   Recent Lows:  {sw.get('swing_lows', [])}
 
-RECENT PRICE ACTION (last 20 candles, oldest → newest):
+RECENT PRICE ACTION (last 30 candles, oldest → newest):
 {candles}
 
 Apply your full 6-step methodology. Return ONLY valid JSON."""
