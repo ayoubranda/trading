@@ -1942,7 +1942,7 @@ export default function App() {
         />
       </div>
 
-      </>{/* end analysis page */}
+      </>
     </div>
   )
 }
