@@ -11,6 +11,7 @@ export default defineConfig({
       '/news':     { target: 'http://localhost:8000', changeOrigin: true, timeout: 300000 },
       '/candles':  { target: 'http://localhost:8000', changeOrigin: true, timeout: 30000 },
       '/confluence':{ target: 'http://localhost:8000', changeOrigin: true, timeout: 30000 },
+      '/terminal': { target: 'http://localhost:8000', changeOrigin: true, timeout: 60000 },
       '/health':   { target: 'http://localhost:8000', changeOrigin: true },
     }
   }

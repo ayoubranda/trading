@@ -1391,6 +1391,216 @@ function ElliottWaveWidget({ ticker, timeframe, apiKey, model, yfTicker, onResul
   )
 }
 
+// ─── Market Terminal ─────────────────────────────────────────
+const CATEGORIES = ['Forex','Metals','Energy','Indices']
+
+function AssetCard({ asset, onClick }) {
+  const sc   = asset.opportunity_score
+  const high = sc >= 8, mid = sc >= 6
+  const col  = high ? '#10b981' : mid ? '#f59e0b' : '#ef4444'
+  const dot  = high ? '🟢' : mid ? '🟡' : '🔴'
+  const dir  = asset.direction_bias === 'BUY' ? '▲' : asset.direction_bias === 'SELL' ? '▼' : '—'
+  const chg  = asset.change_pct ?? 0
+  return (
+    <div className="tm-asset-card" style={{borderColor: col+'44', '--tm-col': col}} onClick={onClick}>
+      <div className="tm-asset-header">
+        <span className="tm-dot">{dot}</span>
+        <span className="tm-asset-name">{asset.name}</span>
+        <span className="tm-dir" style={{color: col}}>{dir}</span>
+      </div>
+      <div className="tm-score" style={{color: col}}>{sc.toFixed(1)}<span className="tm-score-denom">/10</span></div>
+      <div className="tm-score-bar"><div className="tm-score-fill" style={{width:`${sc*10}%`, background: col}}/></div>
+      <div className="tm-asset-meta">
+        <span className="tm-price">{asset.price}</span>
+        <span className={`tm-chg ${chg >= 0 ? 'pos' : 'neg'}`}>{chg >= 0 ? '+' : ''}{chg?.toFixed(2)}%</span>
+      </div>
+      <div className="tm-class" style={{color: col+'cc'}}>{asset.opportunity_class}</div>
+      <div className="tm-trend">{asset.trend} · {asset.momentum} · {asset.structure}</div>
+    </div>
+  )
+}
+
+function MarketTerminal({ apiKey, model, onLoadAsset }) {
+  const [status,     setStatus]     = useState('STANDBY')
+  const [scanResult, setScanResult] = useState(null)
+  const [error,      setError]      = useState(null)
+  const [scanTime,   setScanTime]   = useState(null)
+  const [dots,       setDots]       = useState('')
+
+  useEffect(() => {
+    if (status !== 'SCANNING') return
+    const id = setInterval(() => setDots(d => d.length >= 3 ? '' : d + '.'), 400)
+    return () => clearInterval(id)
+  }, [status])
+
+  const startScan = async () => {
+    setStatus('SCANNING'); setScanResult(null); setError(null); setDots('')
+    const t0 = Date.now()
+    try {
+      const res  = await fetch('/terminal/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ api_key: apiKey || null, model }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Scan failed')
+      setScanResult(data)
+      setScanTime(((Date.now() - t0) / 1000).toFixed(1))
+      setStatus('COMPLETE')
+    } catch (e) {
+      setError(e.message); setStatus('ERROR')
+    }
+  }
+
+  const assets    = scanResult?.assets || []
+  const summary   = scanResult?.scan_summary
+  const topThree  = [...assets].sort((a,b) => b.opportunity_score - a.opportunity_score).slice(0, 3)
+  const byCategory= CATEGORIES.reduce((m, cat) => {
+    m[cat] = assets.filter(a => a.name === 'XAU/USD' || a.name === 'XAG/USD'
+      ? cat === 'Metals'
+      : a.name === 'USOIL' || a.name === 'UKOIL'
+      ? cat === 'Energy'
+      : a.name === 'NASDAQ' || a.name === "S&P500"
+      ? cat === 'Indices'
+      : cat === 'Forex')
+    return m
+  }, {})
+
+  const riskColor = summary?.market_risk === 'Low' ? '#10b981' : summary?.market_risk === 'High' ? '#ef4444' : '#f59e0b'
+  const sentColor = summary?.market_sentiment === 'Bullish' ? '#10b981' : summary?.market_sentiment === 'Bearish' ? '#ef4444' : '#f59e0b'
+
+  return (
+    <div className="tm-wrapper">
+      {/* ── Terminal header ── */}
+      <div className="tm-header-bar">
+        <div className="tm-header-left">
+          <span className="tm-icon">⬡</span>
+          <div>
+            <div className="tm-title">FIBRIOS MARKET TERMINAL</div>
+            <div className="tm-subtitle">Forex · Metals · Energy · Indices — 13 Assets</div>
+          </div>
+        </div>
+        <div className="tm-status-right">
+          <div className={`tm-status-dot ${status === 'SCANNING' ? 'blink' : status === 'COMPLETE' ? 'ok' : status === 'ERROR' ? 'err' : ''}`}/>
+          <span className="tm-status-text">
+            STATUS : {status === 'SCANNING' ? `SCANNING${dots}` : status}
+            {status === 'COMPLETE' && scanTime && ` (${scanTime}s)`}
+          </span>
+        </div>
+      </div>
+
+      {/* ── Scan button ── */}
+      <div className="tm-scan-zone">
+        <button
+          className={`tm-scan-btn${status === 'SCANNING' ? ' tm-scan-btn--active' : ''}`}
+          onClick={startScan}
+          disabled={status === 'SCANNING'}
+        >
+          {status === 'SCANNING'
+            ? <><span className="spinner"/>SCANNING MARKETS…</>
+            : status === 'COMPLETE'
+            ? <>↺ RE-SCAN MARKETS</>
+            : <>▶ START SCAN</>}
+        </button>
+        {!apiKey && (
+          <div className="tm-no-key">⚠ No API key — using algorithmic scoring. Add your key for AI-powered analysis.</div>
+        )}
+      </div>
+
+      {error && <div className="error-banner">⚠ {error}</div>}
+
+      {/* ── Asset grid ── */}
+      {assets.length > 0 && (
+        <>
+          {CATEGORIES.map(cat => byCategory[cat]?.length > 0 && (
+            <div key={cat} className="tm-category-section">
+              <div className="tm-category-title">{cat}</div>
+              <div className="tm-asset-grid">
+                {byCategory[cat].map(a => (
+                  <AssetCard key={a.name} asset={a} onClick={() => onLoadAsset && onLoadAsset(a.name)} />
+                ))}
+              </div>
+            </div>
+          ))}
+
+          {/* ── Top 3 Opportunities ── */}
+          <div className="tm-top3-section">
+            <div className="tm-section-title">TOP 3 OPPORTUNITIES</div>
+            <div className="tm-top3-grid">
+              {topThree.map((a, i) => {
+                const sc   = a.opportunity_score
+                const col  = sc >= 8 ? '#10b981' : sc >= 6 ? '#f59e0b' : '#ef4444'
+                const tp   = a.trade_proposal
+                return (
+                  <div key={a.name} className="tm-top3-card" style={{borderColor: col+'55'}}>
+                    <div className="tm-top3-rank" style={{color: col}}>#{i+1}</div>
+                    <div className="tm-top3-name">{a.name}</div>
+                    <div className="tm-top3-score" style={{color: col}}>{sc.toFixed(1)}/10</div>
+                    <div className="tm-top3-class" style={{color: col+'cc'}}>{a.opportunity_class}</div>
+                    <div className="tm-top3-bias"
+                      style={{background: (a.direction_bias==='BUY'?'rgba(16,185,129,.1)':'rgba(239,68,68,.1)'),
+                              color: a.direction_bias==='BUY'?'#10b981':'#ef4444'}}>
+                      {a.direction_bias==='BUY'?'▲ BUY':a.direction_bias==='SELL'?'▼ SELL':'— NEUTRAL'}
+                    </div>
+                    <div className="tm-top3-bias-text">{a.institutional_bias}</div>
+                    {tp && (
+                      <div className="tm-trade-proposal">
+                        <div className="tm-tp-row"><span>Entry</span><strong>{tp.entry_zone}</strong></div>
+                        <div className="tm-tp-row"><span>Stop</span><strong style={{color:'#ef4444'}}>{tp.stop_loss}</strong></div>
+                        <div className="tm-tp-row"><span>TP1</span><strong style={{color:'#10b981'}}>{tp.take_profit_1}</strong></div>
+                        <div className="tm-tp-row"><span>TP2</span><strong style={{color:'#10b981'}}>{tp.take_profit_2}</strong></div>
+                        <div className="tm-tp-row"><span>R:R</span><strong style={{color:'#06b6d4'}}>{tp.rr_ratio}</strong></div>
+                        {tp.setup_notes && <div className="tm-tp-notes">{tp.setup_notes}</div>}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* ── Scan Summary ── */}
+          {summary && (
+            <div className="tm-summary-section">
+              <div className="tm-section-title">SCAN SUMMARY</div>
+              <div className="tm-summary-grid">
+                <div className="tm-summary-item">
+                  <span>Market Risk</span>
+                  <strong style={{color: riskColor}}>{summary.market_risk}</strong>
+                </div>
+                <div className="tm-summary-item">
+                  <span>Sentiment</span>
+                  <strong style={{color: sentColor}}>{summary.market_sentiment}</strong>
+                </div>
+                <div className="tm-summary-item">
+                  <span>Best Asset</span>
+                  <strong style={{color:'#10b981'}}>↑ {summary.best_asset}</strong>
+                </div>
+                <div className="tm-summary-item">
+                  <span>Worst Asset</span>
+                  <strong style={{color:'#ef4444'}}>↓ {summary.worst_asset}</strong>
+                </div>
+              </div>
+              {summary.summary_note && (
+                <div className="tm-summary-note">{summary.summary_note}</div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Empty state */}
+      {status === 'STANDBY' && (
+        <div className="tm-empty">
+          <div className="tm-empty-icon">⬡</div>
+          <div className="tm-empty-title">Market Terminal Ready</div>
+          <div className="tm-empty-sub">Press START SCAN to analyze all 13 assets simultaneously</div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Main App ────────────────────────────────────────────────
 export default function App() {
   const [inputValue,   setInputValue]   = useState('NVDA')
@@ -1408,6 +1618,7 @@ export default function App() {
   const [activeYf,     setActiveYf]      = useState('NVDA')
   const [ewData,       setEwData]        = useState(null)
   const [newsData,     setNewsData]      = useState(null)
+  const [activePage,   setActivePage]    = useState('analysis')
   const priceTimer = useRef(null)
 
   const saveKey = (v) => { setApiKey(v); localStorage.setItem('et_api_key',v) }
@@ -1478,6 +1689,12 @@ export default function App() {
           </div>
         </div>
         <div className="header-right">
+          <div className="page-tabs">
+            <button className={`page-tab${activePage==='analysis'?' page-tab--active':''}`}
+              onClick={()=>setActivePage('analysis')}>⚡ ANALYSIS</button>
+            <button className={`page-tab${activePage==='terminal'?' page-tab--active':''}`}
+              onClick={()=>setActivePage('terminal')}>⬡ TERMINAL</button>
+          </div>
           <button className="api-key-toggle" onClick={()=>setShowKey(!showKey)}>
             {showKey?'🔒 Hide':'🔑 API Key'}
           </button>
@@ -1487,6 +1704,17 @@ export default function App() {
           )}
         </div>
       </header>
+
+      {/* ── Market Terminal page ── */}
+      {activePage === 'terminal' && (
+        <MarketTerminal apiKey={apiKey} model={model} onLoadAsset={(name) => {
+          setActivePage('analysis')
+          setInputValue(name)
+        }}/>
+      )}
+
+      {/* ── Analysis page ── */}
+      {activePage === 'analysis' && <>
 
       {/* ── Control Panel ── */}
       <div className="control-panel">
@@ -1713,6 +1941,8 @@ export default function App() {
           onResult={setEwData}
         />
       </div>
+
+      </>{/* end analysis page */}
     </div>
   )
 }

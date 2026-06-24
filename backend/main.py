@@ -8,6 +8,7 @@ from elliott_analyzer import analyze_elliott
 from news_fetcher import fetch_all_news
 from news_analyzer import analyze_news
 from confluence_engine import compute_confluence
+from market_terminal import run_scan
 import json
 import asyncio
 
@@ -39,6 +40,11 @@ class ConfluenceRequest(BaseModel):
     technical: Optional[dict] = None
     elliott:   Optional[dict] = None
     news:      Optional[dict] = None
+
+
+class ScanRequest(BaseModel):
+    api_key: Optional[str] = None
+    model: str = "claude-sonnet-4-6"
 
 
 @app.post("/analyze")
@@ -138,6 +144,22 @@ async def get_quote(ticker: str):
         return fetch_quote(ticker)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/terminal/scan")
+async def terminal_scan(req: ScanRequest):
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(
+            None, run_scan, req.api_key, req.model
+        )
+        if "error" in result:
+            raise HTTPException(status_code=500, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Scan error: {e}")
 
 
 @app.get("/health")
